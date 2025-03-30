@@ -64,33 +64,28 @@ pip install -r requirements.txt
 
 ## Configuration
 
-1. Update WiFi credentials in the ESP32 firmware:
-```cpp
-const char *ssid = "YOUR_WIFI_SSID";
-const char *password = "YOUR_WIFI_PASSWORD";
-```
+1. Configure the ESP32-CAM firmware:
+   - Open `firmware/ESP32CamWS/ESP32CamWS.ino` in Arduino IDE
+   - Update the following network credentials:
+     ```cpp
+     const char *ssid = "YOUR_WIFI_SSID";         // Replace with your WiFi SSID
+     const char *password = "YOUR_WIFI_PASSWORD";  // Replace with your WiFi password
+     const char *websocket_server_host = "YOUR_SERVER_IP";  // Replace with your server IP
+     ```
+   - Select your ESP32-CAM board in Arduino IDE
+   - Upload the firmware
 
-2. Configure WebSocket server settings:
-```python
-host = "0.0.0.0"  # Listen on all interfaces
-port = 5000       # WebSocket port
-```
-
-## Usage
-
-1. Start the WebSocket server:
+2. Start the WebSocket server:
 ```bash
 python server.py
 ```
 
-2. Power on your ESP32-CAM modules
+3. Power on your ESP32-CAM modules
 
-3. Open a web browser and navigate to:
+4. Open a web browser and navigate to:
 ```
 http://<server_ip>:5000
 ```
-
-4. Select a camera from the dropdown menu to view its stream
 
 ## Camera Controls
 

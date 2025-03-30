@@ -14,9 +14,9 @@
 #include "camera_pins.h"
 
 // network creds and server info
-const char *ssid = "ABOMB";
-const char *password = "jaggedraccoon!!!";
-const char *websocket_server_host = "192.168.0.156";
+const char *ssid = "YOUR_WIFI_SSID";         // Replace with your WiFi SSID
+const char *password = "YOUR_WIFI_PASSWORD";  // Replace with your WiFi password
+const char *websocket_server_host = "YOUR_SERVER_IP";  // Replace with your server IP
 const uint16_t websocket_server_port = 5000;
 
 // Camera identification
