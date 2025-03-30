@@ -450,6 +450,23 @@ function WSConnection(host, port) {
 	// Variables for stream handling
 	let stream_started = false;
 	let urlObject = null;
+	let reconnectAttempts = 0;
+	const maxReconnectAttempts = 5;
+	const reconnectDelay = 5000; // 5 seconds
+	
+	function attemptReconnect() {
+		if (reconnectAttempts < maxReconnectAttempts) {
+			reconnectAttempts++;
+			console.log(`[+] Attempting to reconnect (${reconnectAttempts}/${maxReconnectAttempts})...`);
+			setTimeout(() => {
+				WSConnection(host, port);
+			}, reconnectDelay);
+		} else {
+			console.log("[-] Max reconnection attempts reached");
+			showError();
+			showConnectionForm();
+		}
+	}
 	
 	try {
 		ws = new WebSocket(WS_URL);
@@ -461,18 +478,15 @@ function WSConnection(host, port) {
 			if (ws.readyState !== WebSocket.OPEN) {
 				console.log("[-] Connection timeout");
 				ws.close();
-				showError();
-				// Attempt to reconnect after timeout
-				setTimeout(() => {
-					console.log("[+] Attempting to reconnect after timeout...");
-					WSConnection(host, port);
-				}, 5000);
+				attemptReconnect();
 			}
-		}, 5000);
+		}, 10000); // Increased timeout to 10 seconds
 		
 		ws.onopen = () => {
 			console.log(`[+] Connected to ${WS_URL}`);
 			clearTimeout(connectionTimeout);
+			reconnectAttempts = 0; // Reset reconnection attempts on successful connection
+			
 			// Send initial message to identify as web client
 			const initMessage = packJSON("init");
 			console.log("[+] Sending init message:", initMessage);
@@ -492,13 +506,7 @@ function WSConnection(host, port) {
 			clearTimeout(connectionTimeout);
 			// Update status to show disconnected state
 			updateStatus({ cameras: {}, web_clients: 0 });
-			showConnectionForm();
-			ws = null;
-			// Attempt to reconnect after error
-			setTimeout(() => {
-				console.log("[+] Attempting to reconnect after error...");
-				WSConnection(host, port);
-			}, 5000);
+			attemptReconnect();
 		}
 
 		ws.onclose = (event) => {
@@ -506,13 +514,7 @@ function WSConnection(host, port) {
 			clearTimeout(connectionTimeout);
 			// Update status to show disconnected state
 			updateStatus({ cameras: {}, web_clients: 0 });
-			showConnectionForm();
-			ws = null;
-			// Attempt to reconnect after close
-			setTimeout(() => {
-				console.log("[+] Attempting to reconnect after close...");
-				WSConnection(host, port);
-			}, 5000);
+			attemptReconnect();
 		}
 
 		ws.onmessage = (message) => {

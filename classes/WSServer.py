@@ -722,7 +722,19 @@ class WSServer:
     
     async def start(self):
         """Start the WebSocket server"""
-        async with websockets.serve(self._handler, self.host, self.port):
+        async with websockets.serve(
+            self._handler,
+            self.host,
+            self.port,
+            ping_interval=30,  # Increased from 20 to 30 seconds
+            ping_timeout=20,   # Increased from 10 to 20 seconds
+            close_timeout=20,  # Increased from 10 to 20 seconds
+            max_size=10_000_000,  # 10MB max message size
+            compression=None,  # Disable compression for better performance
+            max_queue=32,      # Maximum queue size for pending connections
+            read_limit=2**16,  # 64KB read buffer
+            write_limit=2**16  # 64KB write buffer
+        ):
             print(f"[+] WebSocket server started on ws://{self.host}:{self.port}")
             await asyncio.Future()  # run forever
     
@@ -745,9 +757,14 @@ class WSServer:
                     self._handler,
                     self.host,
                     self.port,
-                    ping_interval=20,  # Add ping interval to detect disconnections
-                    ping_timeout=10,   # Add ping timeout
-                    close_timeout=10   # Add close timeout
+                    ping_interval=30,  # Increased from 20 to 30 seconds
+                    ping_timeout=20,   # Increased from 10 to 20 seconds
+                    close_timeout=20,  # Increased from 10 to 20 seconds
+                    max_size=10_000_000,  # 10MB max message size
+                    compression=None,  # Disable compression for better performance
+                    max_queue=32,      # Maximum queue size for pending connections
+                    read_limit=2**16,  # 64KB read buffer
+                    write_limit=2**16  # 64KB write buffer
                 )
                 print(f"[+] WebSocket server running on ws://{self.host}:{self.port}")
                 await self.server.wait_closed()
