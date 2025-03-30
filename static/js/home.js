@@ -11,38 +11,7 @@ let selectedCameraId = null;
 let lastFrameTime = null;  // Add variable for tracking frame timing
 
 // Settings state
-let currentSettings = {
-	camera: {
-		resolution: 'VGA',
-		quality: 63,
-		brightness: 0,
-		contrast: 0,
-		saturation: 0,
-		special_effect: 0,
-		whitebal: 1,
-		awb_gain: 1,
-		wb_mode: 0,
-		exposure_ctrl: 1,
-		aec2: 0,
-		ae_level: 0,
-		aec_value: 300,
-		gain_ctrl: 1,
-		agc_gain: 0,
-		gainceiling: 0,
-		bpc: 0,
-		wpc: 1,
-		raw_gma: 1,
-		lenc: 1,
-		hmirror: 0,
-		vflip: 0
-	},
-	motion: {
-		minArea: 4000,
-		threshold: 25,
-		blurSize: 21,
-		dilation: 2
-	}
-};
+let cameraSettings = {};  // Store settings for each camera
 
 // Load settings from localStorage
 function loadSettings() {
@@ -50,57 +19,69 @@ function loadSettings() {
 	if (savedSettings) {
 		try {
 			const parsedSettings = JSON.parse(savedSettings);
-			// Ensure the structure is complete
-			if (parsedSettings.camera) {
-				currentSettings.camera = {
-					resolution: parsedSettings.camera.resolution || currentSettings.camera.resolution,
-					quality: parsedSettings.camera.quality || currentSettings.camera.quality,
-					brightness: parsedSettings.camera.brightness || currentSettings.camera.brightness,
-					contrast: parsedSettings.camera.contrast || currentSettings.camera.contrast,
-					saturation: parsedSettings.camera.saturation || currentSettings.camera.saturation,
-					special_effect: parsedSettings.camera.special_effect || currentSettings.camera.special_effect,
-					whitebal: parsedSettings.camera.whitebal || currentSettings.camera.whitebal,
-					awb_gain: parsedSettings.camera.awb_gain || currentSettings.camera.awb_gain,
-					wb_mode: parsedSettings.camera.wb_mode || currentSettings.camera.wb_mode,
-					exposure_ctrl: parsedSettings.camera.exposure_ctrl || currentSettings.camera.exposure_ctrl,
-					aec2: parsedSettings.camera.aec2 || currentSettings.camera.aec2,
-					ae_level: parsedSettings.camera.ae_level || currentSettings.camera.ae_level,
-					aec_value: parsedSettings.camera.aec_value || currentSettings.camera.aec_value,
-					gain_ctrl: parsedSettings.camera.gain_ctrl || currentSettings.camera.gain_ctrl,
-					agc_gain: parsedSettings.camera.agc_gain || currentSettings.camera.agc_gain,
-					gainceiling: parsedSettings.camera.gainceiling || currentSettings.camera.gainceiling,
-					bpc: parsedSettings.camera.bpc || currentSettings.camera.bpc,
-					wpc: parsedSettings.camera.wpc || currentSettings.camera.wpc,
-					raw_gma: parsedSettings.camera.raw_gma || currentSettings.camera.raw_gma,
-					lenc: parsedSettings.camera.lenc || currentSettings.camera.lenc,
-					hmirror: parsedSettings.camera.hmirror || currentSettings.camera.hmirror,
-					vflip: parsedSettings.camera.vflip || currentSettings.camera.vflip
-				};
-			}
-			if (parsedSettings.motion) {
-				currentSettings.motion = {
-					minArea: parsedSettings.motion.minArea || currentSettings.motion.minArea,
-					threshold: parsedSettings.motion.threshold || currentSettings.motion.threshold,
-					blurSize: parsedSettings.motion.blurSize || currentSettings.motion.blurSize,
-					dilation: parsedSettings.motion.dilation || currentSettings.motion.dilation
-				};
+			cameraSettings = parsedSettings;
+			// If no settings exist for the selected camera, create default settings
+			if (selectedCameraId && !cameraSettings[selectedCameraId]) {
+				createDefaultSettings(selectedCameraId);
 			}
 			updateSettingsUI();
 		} catch (e) {
 			console.log("[-] Error loading settings:", e);
 			// If there's an error, save the default settings
+			if (selectedCameraId) {
+				createDefaultSettings(selectedCameraId);
+			}
 			saveSettings();
 		}
 	} else {
 		// If no settings exist, save the default settings
+		if (selectedCameraId) {
+			createDefaultSettings(selectedCameraId);
+		}
 		saveSettings();
 	}
+}
+
+// Create default settings for a camera
+function createDefaultSettings(cameraId) {
+	cameraSettings[cameraId] = {
+		camera: {
+			resolution: 'VGA',
+			quality: 63,
+			brightness: 0,
+			contrast: 0,
+			saturation: 0,
+			special_effect: 0,
+			whitebal: 1,
+			awb_gain: 1,
+			wb_mode: 0,
+			exposure_ctrl: 1,
+			aec2: 0,
+			ae_level: 0,
+			aec_value: 300,
+			gain_ctrl: 1,
+			agc_gain: 0,
+			gainceiling: 0,
+			bpc: 0,
+			wpc: 1,
+			raw_gma: 1,
+			lenc: 1,
+			hmirror: 0,
+			vflip: 0
+		},
+		motion: {
+			minArea: 4000,
+			threshold: 25,
+			blurSize: 31,
+			dilation: 3
+		}
+	};
 }
 
 // Save settings to localStorage
 function saveSettings() {
 	try {
-		localStorage.setItem('cameraSettings', JSON.stringify(currentSettings));
+		localStorage.setItem('cameraSettings', JSON.stringify(cameraSettings));
 	} catch (e) {
 		console.log("[-] Error saving settings:", e);
 	}
@@ -109,81 +90,53 @@ function saveSettings() {
 // Update UI with current settings
 function updateSettingsUI() {
 	try {
+		if (!selectedCameraId || !cameraSettings[selectedCameraId]) {
+			console.log("[-] No camera selected or no settings for camera");
+			return;
+		}
+
+		const settings = cameraSettings[selectedCameraId];
+		
 		// Camera settings
-		document.getElementById('resolution').value = currentSettings.camera.resolution;
-		document.getElementById('quality').value = currentSettings.camera.quality;
-		document.getElementById('quality-value').textContent = currentSettings.camera.quality;
-		document.getElementById('brightness').value = currentSettings.camera.brightness;
-		document.getElementById('brightness-value').textContent = currentSettings.camera.brightness;
-		document.getElementById('contrast').value = currentSettings.camera.contrast;
-		document.getElementById('contrast-value').textContent = currentSettings.camera.contrast;
-		document.getElementById('saturation').value = currentSettings.camera.saturation;
-		document.getElementById('saturation-value').textContent = currentSettings.camera.saturation;
-		document.getElementById('special_effect').value = currentSettings.camera.special_effect;
-		document.getElementById('whitebal').checked = currentSettings.camera.whitebal === 1;
-		document.getElementById('awb_gain').checked = currentSettings.camera.awb_gain === 1;
-		document.getElementById('wb_mode').value = currentSettings.camera.wb_mode;
-		document.getElementById('exposure_ctrl').checked = currentSettings.camera.exposure_ctrl === 1;
-		document.getElementById('aec2').checked = currentSettings.camera.aec2 === 1;
-		document.getElementById('ae_level').value = currentSettings.camera.ae_level;
-		document.getElementById('ae_level-value').textContent = currentSettings.camera.ae_level;
-		document.getElementById('aec_value').value = currentSettings.camera.aec_value;
-		document.getElementById('aec_value-value').textContent = currentSettings.camera.aec_value;
-		document.getElementById('gain_ctrl').checked = currentSettings.camera.gain_ctrl === 1;
-		document.getElementById('agc_gain').value = currentSettings.camera.agc_gain;
-		document.getElementById('agc_gain-value').textContent = currentSettings.camera.agc_gain;
-		document.getElementById('gainceiling').value = currentSettings.camera.gainceiling;
-		document.getElementById('bpc').checked = currentSettings.camera.bpc === 1;
-		document.getElementById('wpc').checked = currentSettings.camera.wpc === 1;
-		document.getElementById('raw_gma').checked = currentSettings.camera.raw_gma === 1;
-		document.getElementById('lenc').checked = currentSettings.camera.lenc === 1;
-		document.getElementById('hmirror').checked = currentSettings.camera.hmirror === 1;
-		document.getElementById('vflip').checked = currentSettings.camera.vflip === 1;
+		document.getElementById('resolution').value = settings.camera.resolution;
+		document.getElementById('quality').value = settings.camera.quality;
+		document.getElementById('quality-value').textContent = settings.camera.quality;
+		document.getElementById('brightness').value = settings.camera.brightness;
+		document.getElementById('brightness-value').textContent = settings.camera.brightness;
+		document.getElementById('contrast').value = settings.camera.contrast;
+		document.getElementById('contrast-value').textContent = settings.camera.contrast;
+		document.getElementById('saturation').value = settings.camera.saturation;
+		document.getElementById('saturation-value').textContent = settings.camera.saturation;
+		document.getElementById('special_effect').value = settings.camera.special_effect;
+		document.getElementById('whitebal').checked = settings.camera.whitebal === 1;
+		document.getElementById('awb_gain').checked = settings.camera.awb_gain === 1;
+		document.getElementById('wb_mode').value = settings.camera.wb_mode;
+		document.getElementById('exposure_ctrl').checked = settings.camera.exposure_ctrl === 1;
+		document.getElementById('aec2').checked = settings.camera.aec2 === 1;
+		document.getElementById('ae_level').value = settings.camera.ae_level;
+		document.getElementById('ae_level-value').textContent = settings.camera.ae_level;
+		document.getElementById('aec_value').value = settings.camera.aec_value;
+		document.getElementById('aec_value-value').textContent = settings.camera.aec_value;
+		document.getElementById('gain_ctrl').checked = settings.camera.gain_ctrl === 1;
+		document.getElementById('agc_gain').value = settings.camera.agc_gain;
+		document.getElementById('agc_gain-value').textContent = settings.camera.agc_gain;
+		document.getElementById('gainceiling').value = settings.camera.gainceiling;
+		document.getElementById('bpc').checked = settings.camera.bpc === 1;
+		document.getElementById('wpc').checked = settings.camera.wpc === 1;
+		document.getElementById('raw_gma').checked = settings.camera.raw_gma === 1;
+		document.getElementById('lenc').checked = settings.camera.lenc === 1;
+		document.getElementById('hmirror').checked = settings.camera.hmirror === 1;
+		document.getElementById('vflip').checked = settings.camera.vflip === 1;
 
 		// Motion settings
-		document.getElementById('min-area').value = currentSettings.motion.minArea;
-		document.getElementById('threshold').value = currentSettings.motion.threshold;
-		document.getElementById('threshold-value').textContent = currentSettings.motion.threshold;
-		document.getElementById('blur-size').value = currentSettings.motion.blurSize;
-		document.getElementById('dilation').value = currentSettings.motion.dilation;
-		document.getElementById('dilation-value').textContent = currentSettings.motion.dilation;
+		document.getElementById('min-area').value = settings.motion.minArea;
+		document.getElementById('threshold').value = settings.motion.threshold;
+		document.getElementById('threshold-value').textContent = settings.motion.threshold;
+		document.getElementById('blur-size').value = settings.motion.blurSize;
+		document.getElementById('dilation').value = settings.motion.dilation;
+		document.getElementById('dilation-value').textContent = settings.motion.dilation;
 	} catch (e) {
 		console.log("[-] Error updating settings UI:", e);
-		// If there's an error, reset to default settings
-		currentSettings = {
-			camera: {
-				resolution: 'VGA',
-				quality: 63,
-				brightness: 0,
-				contrast: 0,
-				saturation: 0,
-				special_effect: 0,
-				whitebal: 1,
-				awb_gain: 1,
-				wb_mode: 0,
-				exposure_ctrl: 1,
-				aec2: 0,
-				ae_level: 0,
-				aec_value: 300,
-				gain_ctrl: 1,
-				agc_gain: 0,
-				gainceiling: 0,
-				bpc: 0,
-				wpc: 1,
-				raw_gma: 1,
-				lenc: 1,
-				hmirror: 0,
-				vflip: 0
-			},
-			motion: {
-				minArea: 4000,
-				threshold: 25,
-				blurSize: 21,
-				dilation: 2
-			}
-		};
-		saveSettings();
-		updateSettingsUI();
 	}
 }
 
@@ -199,13 +152,15 @@ function sendSettings() {
 		return;
 	}
 
+	if (!cameraSettings[selectedCameraId]) {
+		console.error('No settings found for selected camera');
+		return;
+	}
+
 	const message = {
 		type: 'web',
 		action: 'settings',
-		data: {
-			camera: currentSettings.camera,
-			motion: currentSettings.motion
-		}
+		data: cameraSettings[selectedCameraId]
 	};
 
 	console.log('[+] Sending settings:', message);
@@ -253,6 +208,12 @@ function showError() {
 // Update status display
 function updateStatus(data) {
 	console.log("[+] Updating status with data:", data);
+	
+	// Check if data is null or undefined
+	if (!data) {
+		console.log("[-] No data provided to updateStatus");
+		return;
+	}
 	
 	// Update connection status indicator
 	const connectionStatus = document.getElementById("connection-status");
@@ -487,12 +448,29 @@ function WSConnection(host, port) {
 			clearTimeout(connectionTimeout);
 			reconnectAttempts = 0; // Reset reconnection attempts on successful connection
 			
+			// Clear any existing stream
+			const stream = document.getElementById('stream');
+			stream.classList.add('hidden');
+			document.getElementById('loading').classList.remove('hidden');
+			
 			// Send initial message to identify as web client
 			const initMessage = packJSON("init");
 			console.log("[+] Sending init message:", initMessage);
 			try {
 				ws.send(initMessage);
 				console.log("[+] Init message sent successfully");
+				
+				// If we have a selected camera, re-send the selection
+				if (selectedCameraId) {
+					console.log("[+] Re-sending camera selection:", selectedCameraId);
+					const selectMessage = {
+						type: 'web',
+						action: 'select_camera',
+						camera_id: selectedCameraId
+					};
+					ws.send(JSON.stringify(selectMessage));
+				}
+				
 				// Send current settings after connection
 				sendSettings();
 			} catch (error) {
@@ -504,6 +482,10 @@ function WSConnection(host, port) {
 		ws.onerror = (error) => {
 			console.log("[-] WebSocket error:", error);
 			clearTimeout(connectionTimeout);
+			// Clear the stream display
+			const stream = document.getElementById('stream');
+			stream.classList.add('hidden');
+			document.getElementById('loading').classList.remove('hidden');
 			// Update status to show disconnected state
 			updateStatus({ cameras: {}, web_clients: 0 });
 			attemptReconnect();
@@ -512,122 +494,85 @@ function WSConnection(host, port) {
 		ws.onclose = (event) => {
 			console.log("[-] WebSocket connection closed:", event.code, event.reason);
 			clearTimeout(connectionTimeout);
+			// Clear the stream display
+			const stream = document.getElementById('stream');
+			stream.classList.add('hidden');
+			document.getElementById('loading').classList.remove('hidden');
 			// Update status to show disconnected state
 			updateStatus({ cameras: {}, web_clients: 0 });
 			attemptReconnect();
 		}
 
-		ws.onmessage = (message) => {
-			if (message.data instanceof Blob) {
-				// Handle binary image data
-				if (!stream_started) {
-					console.log("[+] Stream started");
-					document.getElementById("stream").classList.remove("hidden");
-					document.getElementById("loading").classList.add("hidden");
-					stream_started = true;
-				}
-				
-				console.log(`[+] Received frame of size: ${message.data.size} bytes`);
-				const arrayBuffer = message.data;
-				
-				if (urlObject) {
-					URL.revokeObjectURL(urlObject);
-					console.log("[+] Revoked previous frame URL");
-				}
-				
-				urlObject = URL.createObjectURL(new Blob([arrayBuffer]));
-				console.log("[+] Created new frame URL");
-				
-				const img = document.getElementById("stream");
-				img.onload = () => {
-					console.log("[+] Frame loaded successfully");
-					// Update FPS counter if available
-					const fpsCounter = document.getElementById("fps-counter");
-					if (fpsCounter) {
-						const currentTime = performance.now();
-						if (lastFrameTime) {
-							const fps = 1000 / (currentTime - lastFrameTime);
-							fpsCounter.textContent = `FPS: ${fps.toFixed(1)}`;
-						}
-						lastFrameTime = currentTime;
+		ws.onmessage = function(event) {
+			try {
+				// Check if the message is binary (Blob)
+				if (event.data instanceof Blob) {
+					// Only show the stream if we have a selected camera
+					if (selectedCameraId) {
+						const stream = document.getElementById('stream');
+						const url = URL.createObjectURL(event.data);
+						stream.src = url;
+						stream.classList.remove('hidden');
+						document.getElementById('loading').classList.add('hidden');
 					}
-				};
-				img.onerror = (e) => {
-					console.log("[-] Error loading frame:", e);
-					console.log("[-] Frame URL:", urlObject);
-					console.log("[-] Frame size:", message.data.size);
-				};
-				img.src = urlObject;
-				console.log("[+] Set frame source");
-			} else {
-				// Handle JSON messages (status updates)
-				console.log("[+] Received message type:", typeof message.data);
-				try {
-					const data = JSON.parse(message.data);
-					console.log("[+] Received message:", data);
-					if (data.type === "status") {
-						console.log("[+] Updating status with:", data.data);
+					return;
+				}
+
+				// Handle JSON messages
+				const data = JSON.parse(event.data);
+				
+				if (data && data.type === 'status') {
+					// Check if data.data exists before updating status
+					if (data.data) {
 						updateStatus(data.data);
-						
-						// Handle initial camera selection after first status update
-						if (!ws.hasInitialSelection && data.data.cameras) {
-							const connectedCameras = Object.entries(data.data.cameras)
-								.filter(([_, cam]) => cam.connected)
-								.map(([id]) => id);
-							
-							if (connectedCameras.length > 0) {
-								const firstCamera = connectedCameras[0];
-								console.log("[+] Auto-selecting first connected camera:", firstCamera);
-								selectCamera(firstCamera);
-								ws.hasInitialSelection = true;
-							}
+						// If we have a selected camera but it's not in the status, clear the selection
+						if (selectedCameraId && (!data.data.cameras || !data.data.cameras[selectedCameraId])) {
+							selectedCameraId = null;
+							const stream = document.getElementById('stream');
+							stream.classList.add('hidden');
+							document.getElementById('loading').classList.remove('hidden');
 						}
-					} else if (data.type === "status" && data.message === "camera_selected") {
-						console.log("[+] Camera selection confirmed by server:", data.camera_id);
-						// Update UI to reflect the selected camera
-						const cameraSelect = document.getElementById("camera-select");
-						if (cameraSelect) {
-							cameraSelect.value = data.camera_id;
-							const editButton = document.getElementById("edit-camera-name");
-							if (editButton) {
-								editButton.style.display = "block";
-							}
-						}
-					} else if (data.type === "settings") {
-						console.log("[+] Received settings update:", data.data);
-						// Merge received settings with current settings
-						if (data.data.camera) {
-							currentSettings.camera = {
-								...currentSettings.camera,
-								...data.data.camera
-							};
-						}
-						if (data.data.motion) {
-							currentSettings.motion = {
-								...currentSettings.motion,
-								...data.data.motion
-							};
-						}
-						updateSettingsUI();
-						saveSettings();
-					} else if (data.type === "camera" && data.message === "name_updated") {
-						console.log("[+] Camera name updated:", data);
-						// Update the camera name in the dropdown
-						const cameraSelect = document.getElementById("camera-select");
-						if (cameraSelect) {
-							const option = Array.from(cameraSelect.options).find(opt => opt.value === data.camera_id);
-							if (option) {
-								const isConnected = option.textContent.includes("Connected");
-								option.textContent = `${data.camera_name} (${isConnected ? "Connected" : "Disconnected"})`;
-							}
-						}
+					} else {
+						console.log("[-] Received status message without data");
 					}
-				} catch (e) {
-					console.log("[-] Error parsing message:", e);
-					console.log("[-] Raw message:", message.data);
+				} else if (data && data.type === 'settings') {
+					// Handle settings received from server
+					if (data.data && selectedCameraId) {
+						// Update local settings
+						cameraSettings[selectedCameraId] = data.data;
+						
+						// Update UI with received settings
+						updateSettingsUI();
+						
+						// Save settings to localStorage
+						saveSettings();
+					} else {
+						console.log("[-] Received settings message without data or no camera selected");
+					}
+				} else if (data && data.type === 'camera' && data.message === 'name_updated') {
+					// Handle camera name update
+					if (data.camera_id && data.camera_name) {
+						// Update camera name in the dropdown
+						const cameraSelect = document.getElementById('camera-select');
+						const option = Array.from(cameraSelect.options).find(opt => opt.value === data.camera_id);
+						if (option) {
+							option.text = data.camera_name;
+						}
+						
+						// Update camera name in device status
+						if (deviceStatus && deviceStatus.cameras && deviceStatus.cameras[data.camera_id]) {
+							deviceStatus.cameras[data.camera_id].name = data.camera_name;
+						}
+					} else {
+						console.log("[-] Received camera name update without required data");
+					}
+				} else {
+					console.log("[-] Received unknown message type:", data ? data.type : 'undefined');
 				}
+			} catch (error) {
+				console.error('Error handling WebSocket message:', error);
 			}
-		}
+		};
 	} catch (error) {
 		console.log("[-] Error creating WebSocket:", error);
 		showError();
@@ -831,60 +776,179 @@ document.addEventListener('DOMContentLoaded', function() {
 	
 	// Set up motion settings event listeners
 	document.getElementById('min-area').addEventListener('input', function(e) {
-		currentSettings.motion.minArea = parseInt(e.target.value);
+		if (!selectedCameraId || !cameraSettings[selectedCameraId]) {
+			console.error('No camera selected or settings not found');
+			return;
+		}
+		cameraSettings[selectedCameraId].motion.minArea = parseInt(e.target.value);
 	});
 	
 	document.getElementById('threshold').addEventListener('input', function(e) {
-		currentSettings.motion.threshold = parseInt(e.target.value);
+		if (!selectedCameraId || !cameraSettings[selectedCameraId]) {
+			console.error('No camera selected or settings not found');
+			return;
+		}
+		cameraSettings[selectedCameraId].motion.threshold = parseInt(e.target.value);
 		document.getElementById('threshold-value').textContent = e.target.value;
 	});
 	
 	document.getElementById('blur-size').addEventListener('change', function(e) {
-		currentSettings.motion.blurSize = parseInt(e.target.value);
+		if (!selectedCameraId || !cameraSettings[selectedCameraId]) {
+			console.error('No camera selected or settings not found');
+			return;
+		}
+		cameraSettings[selectedCameraId].motion.blurSize = parseInt(e.target.value);
 	});
 	
 	document.getElementById('dilation').addEventListener('input', function(e) {
-		currentSettings.motion.dilation = parseInt(e.target.value);
+		if (!selectedCameraId || !cameraSettings[selectedCameraId]) {
+			console.error('No camera selected or settings not found');
+			return;
+		}
+		cameraSettings[selectedCameraId].motion.dilation = parseInt(e.target.value);
 		document.getElementById('dilation-value').textContent = e.target.value;
 	});
 	
 	// Update motion settings apply button handler
 	document.getElementById('apply-motion-settings').addEventListener('click', function() {
-		console.log("[+] Applying motion settings:", currentSettings.motion);
+		console.log("[+] Applying motion settings:", cameraSettings[selectedCameraId].motion);
 		saveSettings();
 		sendSettings();
 	});
 	
-	// Set up camera settings event listeners
-	const cameraSettings = [
-		'resolution', 'quality', 'brightness', 'contrast', 'saturation', 'special_effect', 'whitebal',
-		'awb_gain', 'wb_mode', 'exposure_ctrl', 'aec2', 'ae_level', 'aec_value',
-		'gain_ctrl', 'agc_gain', 'gainceiling', 'bpc', 'wpc', 'raw_gma', 'lenc',
-		'hmirror', 'vflip'
-	];
+	// Set up event listeners for camera settings
+	const cameraSettingsElements = {
+		'resolution': 'select-one',
+		'quality': 'range',
+		'brightness': 'range',
+		'contrast': 'range',
+		'saturation': 'range',
+		'special_effect': 'select-one',
+		'whitebal': 'checkbox',
+		'awb_gain': 'checkbox',
+		'wb_mode': 'select-one',
+		'exposure_ctrl': 'checkbox',
+		'aec2': 'checkbox',
+		'ae_level': 'range',
+		'aec_value': 'range',
+		'gain_ctrl': 'checkbox',
+		'agc_gain': 'range',
+		'gainceiling': 'select-one',
+		'bpc': 'checkbox',
+		'wpc': 'checkbox',
+		'raw_gma': 'checkbox',
+		'lenc': 'checkbox',
+		'hmirror': 'checkbox',
+		'vflip': 'checkbox'
+	};
 
-	cameraSettings.forEach(setting => {
+	Object.entries(cameraSettingsElements).forEach(([setting, type]) => {
 		const element = document.getElementById(setting);
-		if (element) {
-			if (element.type === 'checkbox') {
-				element.addEventListener('change', function(e) {
-					currentSettings.camera[setting] = e.target.checked ? 1 : 0;
-				});
-			} else if (element.type === 'range') {
-				element.addEventListener('input', function(e) {
-					currentSettings.camera[setting] = parseInt(e.target.value);
-					document.getElementById(`${setting}-value`).textContent = e.target.value;
-				});
-			} else if (element.type === 'select-one') {
-				element.addEventListener('change', function(e) {
-					currentSettings.camera[setting] = parseInt(e.target.value);
-				});
-			}
+		if (!element) {
+			console.error(`Element not found: ${setting}`);
+			return;
+		}
+
+		if (type === 'checkbox') {
+			element.addEventListener('change', function(e) {
+				if (!selectedCameraId) {
+					console.error('No camera selected');
+					return;
+				}
+				if (!cameraSettings[selectedCameraId]) {
+					createDefaultSettings(selectedCameraId);
+				}
+				cameraSettings[selectedCameraId].camera[setting] = e.target.checked ? 1 : 0;
+			});
+		} else if (type === 'range') {
+			element.addEventListener('input', function(e) {
+				if (!selectedCameraId) {
+					console.error('No camera selected');
+					return;
+				}
+				if (!cameraSettings[selectedCameraId]) {
+					createDefaultSettings(selectedCameraId);
+				}
+				cameraSettings[selectedCameraId].camera[setting] = parseInt(e.target.value);
+				document.getElementById(`${setting}-value`).textContent = e.target.value;
+			});
+		} else if (type === 'select-one') {
+			element.addEventListener('change', function(e) {
+				if (!selectedCameraId) {
+					console.error('No camera selected');
+					return;
+				}
+				if (!cameraSettings[selectedCameraId]) {
+					createDefaultSettings(selectedCameraId);
+				}
+				cameraSettings[selectedCameraId].camera[setting] = parseInt(e.target.value);
+			});
 		}
 	});
 	
 	document.getElementById('apply-camera-settings').addEventListener('click', function() {
-		currentSettings.camera.resolution = document.getElementById('resolution').value;
+		if (!selectedCameraId) {
+			console.error('No camera selected');
+			return;
+		}
+
+		// Get current settings for the selected camera
+		const settings = cameraSettings[selectedCameraId];
+		if (!settings) {
+			console.error('No settings found for selected camera');
+			return;
+		}
+
+		// Update camera settings
+		settings.camera.resolution = document.getElementById('resolution').value;
+		settings.camera.quality = parseInt(document.getElementById('quality').value);
+		settings.camera.brightness = parseInt(document.getElementById('brightness').value);
+		settings.camera.contrast = parseInt(document.getElementById('contrast').value);
+		settings.camera.saturation = parseInt(document.getElementById('saturation').value);
+		settings.camera.special_effect = parseInt(document.getElementById('special_effect').value);
+		settings.camera.whitebal = document.getElementById('whitebal').checked ? 1 : 0;
+		settings.camera.awb_gain = document.getElementById('awb_gain').checked ? 1 : 0;
+		settings.camera.wb_mode = parseInt(document.getElementById('wb_mode').value);
+		settings.camera.exposure_ctrl = document.getElementById('exposure_ctrl').checked ? 1 : 0;
+		settings.camera.aec2 = document.getElementById('aec2').checked ? 1 : 0;
+		settings.camera.ae_level = parseInt(document.getElementById('ae_level').value);
+		settings.camera.aec_value = parseInt(document.getElementById('aec_value').value);
+		settings.camera.gain_ctrl = document.getElementById('gain_ctrl').checked ? 1 : 0;
+		settings.camera.agc_gain = parseInt(document.getElementById('agc_gain').value);
+		settings.camera.gainceiling = parseInt(document.getElementById('gainceiling').value);
+		settings.camera.bpc = document.getElementById('bpc').checked ? 1 : 0;
+		settings.camera.wpc = document.getElementById('wpc').checked ? 1 : 0;
+		settings.camera.raw_gma = document.getElementById('raw_gma').checked ? 1 : 0;
+		settings.camera.lenc = document.getElementById('lenc').checked ? 1 : 0;
+		settings.camera.hmirror = document.getElementById('hmirror').checked ? 1 : 0;
+		settings.camera.vflip = document.getElementById('vflip').checked ? 1 : 0;
+
+		// Save settings and send to server
+		saveSettings();
+		sendSettings();
+	});
+	
+	// Add event listeners for motion settings
+	document.getElementById('apply-motion-settings').addEventListener('click', function() {
+		if (!selectedCameraId) {
+			console.error('No camera selected');
+			return;
+		}
+
+		// Get current settings for the selected camera
+		const settings = cameraSettings[selectedCameraId];
+		if (!settings) {
+			console.error('No settings found for selected camera');
+			return;
+		}
+
+		// Update motion settings
+		settings.motion.minArea = parseInt(document.getElementById('min-area').value);
+		settings.motion.threshold = parseInt(document.getElementById('threshold').value);
+		settings.motion.blurSize = parseInt(document.getElementById('blur-size').value);
+		settings.motion.dilation = parseInt(document.getElementById('dilation').value);
+
+		// Save settings and send to server
 		saveSettings();
 		sendSettings();
 	});
@@ -922,31 +986,29 @@ document.addEventListener('DOMContentLoaded', function() {
 
 // handle camera selection
 function selectCamera(cameraId) {
-	console.log("[+] Selecting camera:", cameraId);
-	selectedCameraId = cameraId;
-	
-	// Update the camera select element
-	const cameraSelect = document.getElementById("camera-select");
-	if (cameraSelect) {
-		cameraSelect.value = cameraId;
-		// Show/hide edit name button based on selection
-		const editButton = document.getElementById("edit-camera-name");
-		if (editButton) {
-			editButton.style.display = cameraId ? "block" : "none";
-		}
+	if (!cameraId) {
+		console.error('No camera ID provided');
+		return;
 	}
+	
+	selectedCameraId = cameraId;
 	
 	// Send camera selection to server
 	if (ws && ws.readyState === WebSocket.OPEN) {
 		const message = {
-			type: "web",
-			action: "select_camera",
+			type: 'web',
+			action: 'select_camera',
 			camera_id: cameraId
 		};
-		console.log("[+] Sending camera selection message:", message);
 		ws.send(JSON.stringify(message));
-	} else {
-		console.log("[-] WebSocket not connected, cannot select camera");
+		
+		// Request settings from server
+		const settingsMessage = {
+			type: 'web',
+			action: 'get_settings',
+			camera_id: cameraId
+		};
+		ws.send(JSON.stringify(settingsMessage));
 	}
 }
 

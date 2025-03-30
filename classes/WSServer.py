@@ -411,7 +411,7 @@ class WSServer:
                     # Remove the thread from the dictionary
                     self.processing_threads.pop(camera_id, None)
 
-    async def handle_settings(self, settings):
+    async def handle_settings(self, settings, websocket):
         """Handle settings updates from clients"""
         print(f"[+] Received settings update: {settings}")
         
@@ -419,45 +419,69 @@ class WSServer:
         if isinstance(settings, dict) and 'data' in settings:
             settings = settings['data']
         
+        # Get the selected camera ID for this web client
+        selected_camera_id = self.web_clients.get(websocket)
+        if not selected_camera_id:
+            print("[-] No camera selected for settings update")
+            return
+        
+        settings_updated = False
+        
         if 'motion' in settings:
             motion_settings = settings['motion']
-            self.default_motion_settings.update(motion_settings)
-            for camera_id in self.camera_motion_settings:
-                self.camera_motion_settings[camera_id].update(motion_settings)
-            print(f"[+] Updated motion settings: {motion_settings}")
+            # Update motion settings only for the selected camera
+            if selected_camera_id not in self.camera_motion_settings:
+                self.camera_motion_settings[selected_camera_id] = self.default_motion_settings.copy()
+            self.camera_motion_settings[selected_camera_id].update(motion_settings)
+            print(f"[+] Updated motion settings for camera {selected_camera_id}: {motion_settings}")
+            settings_updated = True
         
         if 'camera' in settings:
             camera_settings = settings['camera']
-            # Update settings for all cameras
-            for camera_id in self.camera_settings:
-                self.camera_settings[camera_id].update(camera_settings)
-            print(f"[+] Updated camera settings: {camera_settings}")
+            # Update settings only for the selected camera
+            if selected_camera_id not in self.camera_settings:
+                self.camera_settings[selected_camera_id] = self.default_camera_settings.copy()
+            self.camera_settings[selected_camera_id].update(camera_settings)
+            print(f"[+] Updated camera settings for camera {selected_camera_id}: {camera_settings}")
             
-            # Send camera settings to all camera clients
+            # Send camera settings to the specific camera
             camera_settings_message = {
                 "type": "settings",
                 "data": {"camera": camera_settings}
             }
-            for client in self.camera_clients.values():
+            if selected_camera_id in self.camera_clients:
                 try:
-                    await client.send(json.dumps(camera_settings_message))
+                    await self.camera_clients[selected_camera_id].send(json.dumps(camera_settings_message))
+                    print(f"[+] Applied settings to camera {selected_camera_id}")
                 except Exception as e:
                     print(f"[-] Error sending camera settings to client: {e}")
                     import traceback
                     traceback.print_exc()
+            settings_updated = True
         
-        # Save settings to file
-        self.save_settings()
-        
-        # Broadcast updated settings to all web clients
-        settings_message = {
-            "type": "settings",
-            "data": {
-                "motion": self.default_motion_settings,
-                "camera": self.get_camera_settings(next(iter(self.camera_settings.keys()))) if self.camera_settings else self.default_camera_settings
+        if settings_updated:
+            # Save settings to file
+            self.save_settings()
+            
+            # Broadcast updated settings to all web clients that have selected this camera
+            settings_message = {
+                "type": "settings",
+                "data": {
+                    "motion": self.camera_motion_settings.get(selected_camera_id, self.default_motion_settings),
+                    "camera": self.camera_settings.get(selected_camera_id, self.default_camera_settings)
+                }
             }
-        }
-        await self.broadcast_to_web_clients(json.dumps(settings_message))
+            
+            # Send to all web clients that have selected this camera
+            for client, selected_cam in self.web_clients.items():
+                if selected_cam == selected_camera_id:
+                    try:
+                        await client.send(json.dumps(settings_message))
+                        print(f"[+] Sent settings update to web client for camera {selected_camera_id}")
+                    except Exception as e:
+                        print(f"[-] Error sending settings update to web client: {e}")
+                        import traceback
+                        traceback.print_exc()
 
     async def broadcast_status(self):
         """Broadcast current device status to all web clients"""
@@ -681,6 +705,22 @@ class WSServer:
                                 "camera_id": camera_id
                             }))
                             await self.broadcast_status()
+                    elif data.get('action') == 'get_settings':
+                        camera_id = data.get('camera_id')
+                        if camera_id:
+                            # Get current settings for the camera
+                            camera_settings = self.get_camera_settings(camera_id)
+                            motion_settings = self.get_camera_motion_settings(camera_id)
+                            
+                            # Send settings to the web client
+                            settings_message = {
+                                "type": "settings",
+                                "data": {
+                                    "camera": camera_settings,
+                                    "motion": motion_settings
+                                }
+                            }
+                            await websocket.send(json.dumps(settings_message))
                     elif data.get('action') == 'command':
                         # Handle command messages
                         command = data.get('message')
@@ -696,7 +736,7 @@ class WSServer:
                         # Handle settings messages
                         settings = data.get('data')
                         if settings:
-                            await self.handle_settings(settings)
+                            await self.handle_settings(settings, websocket)
             else:
                 # Handle binary messages (camera frames)
                 camera_id = self._get_camera_id_from_websocket(websocket)
@@ -749,6 +789,48 @@ class WSServer:
         finally:
             await self.unregister(websocket)
     
+    def cleanup(self):
+        """Clean up resources before server shutdown"""
+        print("[+] Cleaning up server resources...")
+        
+        # Stop all processing threads
+        for camera_id in list(self.processing_threads.keys()):
+            self.stop_processing_thread(camera_id)
+        
+        # Clear all queues
+        for camera_id in list(self.frame_queues.keys()):
+            while not self.frame_queues[camera_id].empty():
+                try:
+                    self.frame_queues[camera_id].get_nowait()
+                except Empty:
+                    break
+            self.frame_queues[camera_id].put(None)  # Poison pill
+        
+        # Clear all dictionaries
+        self.prev_frames.clear()
+        self.frame_queues.clear()
+        self.processing_threads.clear()
+        self.stop_processing.clear()
+        self.thread_locks.clear()
+        self.frame_counts.clear()
+        self.last_fps_update.clear()
+        self.fps.clear()
+        self.frame_times.clear()
+        self.last_frame_time.clear()
+        
+        # Shutdown thread pool
+        self.thread_pool.shutdown(wait=True)
+        
+        # Close event loop if it's still running
+        if not self.loop.is_closed():
+            self.loop.close()
+        
+        print("[+] Server cleanup completed")
+
+    def __del__(self):
+        """Cleanup when the server is destroyed"""
+        self.cleanup()
+
     def run(self):
         """Start the WebSocket server"""
         async def main():
@@ -770,24 +852,16 @@ class WSServer:
                 await self.server.wait_closed()
             except Exception as e:
                 print(f"[-] Server error: {e}")
+                self.cleanup()  # Ensure cleanup on error
         
         try:
             # Run the server in the event loop
             self.loop.run_until_complete(main())
         except KeyboardInterrupt:
             print("[+] Shutting down WebSocket server")
+            self.cleanup()  # Ensure cleanup on interrupt
         except Exception as e:
             print(f"[-] Server error: {e}")
+            self.cleanup()  # Ensure cleanup on error
         finally:
-            self.loop.close()
-
-    def __del__(self):
-        """Cleanup when the server is destroyed"""
-        # Stop all processing threads
-        for camera_id in list(self.processing_threads.keys()):
-            self.stop_processing_thread(camera_id)
-        # Shutdown thread pool
-        self.thread_pool.shutdown(wait=True)
-        # Close event loop if it's still running
-        if not self.loop.is_closed():
-            self.loop.close() 
+            self.cleanup()  # Ensure cleanup in all cases 
