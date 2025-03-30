@@ -29,13 +29,13 @@ venv.bak/
 .python-version
 
 # Arduino
+# Build artifacts
 *.hex
 *.elf
 *.bin
 *.eep
 *.lss
 *.sym
-*.lst
 *.map
 *.dep
 *.d
@@ -44,28 +44,20 @@ venv.bak/
 *.la
 *.lo
 *.obj
-*.i
-*.ii
-*.s
-*.S
-*.cpp
-*.cc
-*.c
-*.h
-*.hpp
-*.hh
-*.ino.bak
+# Temporary files
 *.bak
 *.swp
 *~
-
-# IDE specific files
-.idea/
+# IDE specific
 .vscode/
-*.swp
-*.swo
-.DS_Store
-Thumbs.db
+.idea/
+# Keep source files
+# *.cpp
+# *.c
+# *.h
+# *.hpp
+# *.hh
+# *.ino
 
 # Project specific
 camera_settings.json
