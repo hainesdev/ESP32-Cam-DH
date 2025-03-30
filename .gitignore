@@ -51,13 +51,6 @@ venv.bak/
 # IDE specific
 .vscode/
 .idea/
-# Keep source files
-# *.cpp
-# *.c
-# *.h
-# *.hpp
-# *.hh
-# *.ino
 
 # Project specific
 camera_settings.json
