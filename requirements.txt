@@ -1,10 +1,16 @@
-click==8.0.3
-colorama==0.4.4
-Flask==2.0.2
-itsdangerous==2.0.1
-Jinja2==3.0.3
-MarkupSafe==2.0.1
-websockets>=10.0
-Werkzeug==2.0.2
-opencv-python>=4.5.0
-numpy>=1.19.0
+# Web Framework and Dependencies
+Flask==2.0.2  # Main web framework
+Werkzeug==2.0.2  # Required by Flask
+click==8.0.3  # Required by Flask
+itsdangerous==2.0.1  # Required by Flask for session handling
+
+# Template Engine
+Jinja2==3.0.3  # Template engine used by Flask
+MarkupSafe==2.0.1  # Required by Jinja2
+
+# WebSocket Support
+websockets>=10.0  # WebSocket server implementation
+
+# Image Processing
+opencv-python>=4.5.0  # Used for motion detection and image processing
+numpy>=1.19.0  # Required by OpenCV and used for array operations
