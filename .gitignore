@@ -4,7 +4,6 @@ __pycache__/
 *$py.class
 *.so
 .Python
-env/
 build/
 develop-eggs/
 dist/
@@ -20,8 +19,14 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-venv/
 .env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.python-version
 
 # Arduino
 *.hex
@@ -30,18 +35,101 @@ venv/
 *.eep
 *.lss
 *.sym
-*.map
 *.lst
+*.map
+*.dep
+*.d
+*.o
+*.a
+*.la
+*.lo
+*.obj
+*.i
+*.ii
+*.s
+*.S
+*.cpp
+*.cc
+*.c
+*.h
+*.hpp
+*.hh
+*.ino.bak
 *.bak
 *.swp
 *~
 
-# IDE
+# IDE specific files
 .idea/
 .vscode/
-*.sublime-project
-*.sublime-workspace
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
 
 # Project specific
 camera_settings.json
-*.log 
+*.log
+logs/
+*.db
+*.sqlite3
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pyenv
+.python-version
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# pytype static type analyzer
+.pytype/
+
+# Cython debug symbols
+cython_debug/
+
+# Local development settings
+local_settings.py
+
+# Database
+*.db
+*.sqlite3
+
+# Logs
+*.log
+logs/ 
