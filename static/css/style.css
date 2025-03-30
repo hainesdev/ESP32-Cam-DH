@@ -84,7 +84,7 @@
     margin: 0 auto;
   }
   
-  .d-pad a {
+  .d-pad button {
     position: absolute;
     width: 40px;
     height: 40px;
@@ -92,9 +92,12 @@
     display: block;
     border-radius: 5px;
     transition: var(--transition);
+    border: none;
+    padding: 0;
+    cursor: pointer;
   }
   
-  .d-pad a:active {
+  .d-pad button:active {
     background: var(--primary-color);
     transform: scale(0.95);
   }
@@ -154,6 +157,9 @@
     align-items: center;
     text-decoration: none;
     transition: var(--transition);
+    border: none;
+    padding: 0;
+    cursor: pointer;
   }
   
   .action-btn:active {
@@ -175,6 +181,46 @@
     border-radius: 50%;
     background: #222;
     z-index: 1;
+  }
+  
+  /* Card header styling */
+  .card-header {
+    background-color: var(--light-bg);
+    border-bottom: 1px solid rgba(0,0,0,.125);
+  }
+  
+  .card-header .btn-link {
+    color: var(--primary-color);
+    text-decoration: none;
+    font-weight: 600;
+    width: 100%;
+    text-align: left;
+    padding: 0.5rem 0;
+  }
+  
+  .card-header .btn-link:hover {
+    color: #2980b9;
+    text-decoration: none;
+  }
+  
+  .card-header .btn-link::after {
+    content: '▼';
+    float: right;
+    transition: transform 0.3s ease;
+  }
+  
+  .card-header .btn-link[aria-expanded="true"]::after {
+    transform: rotate(180deg);
+  }
+  
+  /* Camera selection styling */
+  .camera-selection .card-body {
+    padding: 1rem;
+  }
+  
+  .camera-selection .btn-outline-primary {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.875rem;
   }
   
   /* Connection form styling */
@@ -267,6 +313,74 @@
   .status-container .badge {
     font-size: 0.9rem;
     padding: 0.5em 1em;
+  }
+  
+  /* Status section styling */
+  .status-container {
+    background-color: white;
+    border-radius: var(--border-radius);
+    box-shadow: var(--box-shadow);
+  }
+  
+  .status-indicator {
+    width: 24px;
+    height: 24px;
+    position: relative;
+  }
+  
+  .status-dot {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background-color: #dc3545;
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    transition: background-color 0.3s ease;
+  }
+  
+  .status-dot.connected {
+    background-color: #28a745;
+    box-shadow: 0 0 10px rgba(40, 167, 69, 0.5);
+  }
+  
+  .status-dot.connecting {
+    background-color: #ffc107;
+    box-shadow: 0 0 10px rgba(255, 193, 7, 0.5);
+    animation: pulse 1.5s infinite;
+  }
+  
+  .status-text {
+    font-size: 1.1rem;
+    font-weight: 500;
+    color: var(--secondary-color);
+  }
+  
+  .status-badge {
+    display: inline-block;
+    padding: 0.5rem 1rem;
+    background-color: var(--light-bg);
+    border-radius: 20px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    color: var(--secondary-color);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+  }
+  
+  @keyframes pulse {
+    0% {
+        transform: translate(-50%, -50%) scale(1);
+        opacity: 1;
+    }
+    50% {
+        transform: translate(-50%, -50%) scale(1.2);
+        opacity: 0.7;
+    }
+    100% {
+        transform: translate(-50%, -50%) scale(1);
+        opacity: 1;
+    }
   }
   
   /* Responsive design */

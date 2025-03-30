@@ -14,9 +14,9 @@
 #include "camera_pins.h"
 
 // network creds and server info
-const char *ssid = "YOUR_WIFI_SSID";
-const char *password = "YOUR_WIFI_PASSWORD";
-const char *websocket_server_host = "YOUR_SERVER_IP";
+const char *ssid = "ABOMB";
+const char *password = "jaggedraccoon!!!";
+const char *websocket_server_host = "192.168.0.156";
 const uint16_t websocket_server_port = 5000;
 
 // Camera identification
@@ -77,13 +77,25 @@ void applyCameraSettings() {
         return;
     }
 
+    // Store current frame size
+    framesize_t current_framesize = s->status.framesize;
+
     // Set frame size based on resolution
+    framesize_t new_framesize;
     if (cameraSettings.resolution == "UXGA") {
-        s->set_framesize(s, FRAMESIZE_UXGA);
+        new_framesize = FRAMESIZE_UXGA;
     } else if (cameraSettings.resolution == "VGA") {
-        s->set_framesize(s, FRAMESIZE_VGA);
+        new_framesize = FRAMESIZE_VGA;
     } else if (cameraSettings.resolution == "SVGA") {
-        s->set_framesize(s, FRAMESIZE_SVGA);
+        new_framesize = FRAMESIZE_SVGA;
+    } else {
+        new_framesize = current_framesize;  // Keep current if unknown
+    }
+
+    // Only change frame size if it's different
+    if (new_framesize != current_framesize) {
+        s->set_framesize(s, new_framesize);
+        delay(100);  // Give the camera time to adjust
     }
     
     // Apply all sensor settings
@@ -109,7 +121,26 @@ void applyCameraSettings() {
     s->set_hmirror(s, cameraSettings.hmirror);
     s->set_vflip(s, cameraSettings.vflip);
 
+    // Verify settings were applied
+    if (s->status.framesize != new_framesize) {
+        Serial.println("Warning: Frame size setting may not have been applied correctly");
+    }
+
     Serial.println("Camera settings applied successfully");
+    
+    // Send a test frame to verify camera is working
+    camera_fb_t *fb = esp_camera_fb_get();
+    if (fb) {
+        bool sent = client.sendBinary((const char *)fb->buf, fb->len);
+        if (sent) {
+            Serial.println("Sent test frame after settings application");
+        } else {
+            Serial.println("Failed to send test frame after settings application");
+        }
+        esp_camera_fb_return(fb);
+    } else {
+        Serial.println("Failed to capture test frame after settings application");
+    }
 }
 
 // Function to handle settings message
@@ -368,8 +399,8 @@ void setup() {
   config.grab_mode = CAMERA_GRAB_LATEST;
 
   // Start with conservative settings for reliable initialization
-  config.frame_size = FRAMESIZE_SVGA;
-  config.jpeg_quality = 12;
+  config.frame_size = FRAMESIZE_VGA;
+  config.jpeg_quality = 63;  // Highest compression (lowest quality)
   config.fb_count = 1;  // Start with single buffer
 
   // Power up the camera with proper sequence
@@ -517,6 +548,10 @@ void setup() {
     s->set_hmirror(s, 0);
     s->set_vflip(s, 0);
     
+    // Set initial frame size and quality
+    s->set_framesize(s, FRAMESIZE_VGA);
+    s->set_quality(s, 63);  // Highest compression
+    
     Serial.println("Camera sensor settings applied");
   } else {
     Serial.println("Failed to get camera sensor");
@@ -647,49 +682,8 @@ void handle_json(const String& raw_data) {
         return;
     }
 
-    // Get message field
-    const char* message = jsonBuffer["message"];
-    if (!message) {
-        Serial.println("No message field in JSON");
-        return;
-    }
-
-    // Debug information
-    Serial.print("Received command: ");
-    Serial.println(message);
-
-    // Execute the appropriate command
-    if (strcmp(message, "forward") == 0) {
-        forward();
-    } else if (strcmp(message, "reverse") == 0) {
-        reverse();
-    } else if (strcmp(message, "hault") == 0) {
-        hault();
-    } else if (strcmp(message, "left") == 0) {
-        left();
-    } else if (strcmp(message, "right") == 0) {
-        right();
-    } else if (strcmp(message, "AON") == 0) {
-        a_button_on();
-    } else if (strcmp(message, "AOFF") == 0) {
-        a_button_off();
-    } else if (strcmp(message, "BON") == 0) {
-        b_button_on();
-    } else if (strcmp(message, "BOFF") == 0) {
-        b_button_off();
-    } else if (strcmp(message, "LED_ON") == 0) {
-        Serial.println("Turning FLASH LED ON");
-        setFlashLED(HIGH);
-        Serial.println("Flash LED command executed");
-    } else if (strcmp(message, "LED_OFF") == 0) {
-        Serial.println("Turning FLASH LED OFF");
-        setFlashLED(LOW);
-        Serial.println("Flash LED command executed");
-    } else if (strcmp(message, "LED_TOGGLE") == 0) {
-        Serial.println("Toggling FLASH LED");
-        toggleFlashLED();
-        Serial.println("Flash LED command executed");
-    } else if (strcmp(message, "SETTINGS") == 0) {
+    // Check for settings message first
+    if (jsonBuffer.containsKey("type") && jsonBuffer["type"] == "settings") {
         Serial.println("Received settings command");
         // Get the data field containing camera settings
         if (jsonBuffer.containsKey("data") && jsonBuffer["data"].containsKey("camera")) {
@@ -769,6 +763,60 @@ void handle_json(const String& raw_data) {
         } else {
             Serial.println("Invalid settings format");
         }
+        return;
+    }
+
+    // Handle camera name update
+    if (jsonBuffer.containsKey("type") && jsonBuffer["type"] == "camera" && 
+        jsonBuffer.containsKey("action") && strcmp(jsonBuffer["action"], "update_name") == 0) {
+        if (jsonBuffer.containsKey("camera_name")) {
+            camera_name = jsonBuffer["camera_name"].as<String>();
+            Serial.printf("Camera name updated to: %s\n", camera_name.c_str());
+        }
+        return;
+    }
+
+    // Handle command messages
+    if (!jsonBuffer.containsKey("message")) {
+        Serial.println("No message field in JSON");
+        return;
+    }
+
+    const char* message = jsonBuffer["message"];
+    Serial.print("Received command: ");
+    Serial.println(message);
+
+    // Execute the appropriate command
+    if (strcmp(message, "forward") == 0) {
+        forward();
+    } else if (strcmp(message, "reverse") == 0) {
+        reverse();
+    } else if (strcmp(message, "hault") == 0) {
+        hault();
+    } else if (strcmp(message, "left") == 0) {
+        left();
+    } else if (strcmp(message, "right") == 0) {
+        right();
+    } else if (strcmp(message, "AON") == 0) {
+        a_button_on();
+    } else if (strcmp(message, "AOFF") == 0) {
+        a_button_off();
+    } else if (strcmp(message, "BON") == 0) {
+        b_button_on();
+    } else if (strcmp(message, "BOFF") == 0) {
+        b_button_off();
+    } else if (strcmp(message, "LED_ON") == 0) {
+        Serial.println("Turning FLASH LED ON");
+        setFlashLED(HIGH);
+        Serial.println("Flash LED command executed");
+    } else if (strcmp(message, "LED_OFF") == 0) {
+        Serial.println("Turning FLASH LED OFF");
+        setFlashLED(LOW);
+        Serial.println("Flash LED command executed");
+    } else if (strcmp(message, "LED_TOGGLE") == 0) {
+        Serial.println("Toggling FLASH LED");
+        toggleFlashLED();
+        Serial.println("Flash LED command executed");
     } else {
         Serial.print("Unknown command: ");
         Serial.println(message);
@@ -824,12 +872,14 @@ void loop() {
     }
 
     if (!fb) {
+        Serial.println("Failed to capture frame");
         setStatusLED(LOW);
         return;
     }
 
     // Ensure it's in JPEG format
     if (fb->format != PIXFORMAT_JPEG) {
+        Serial.println("Frame not in JPEG format");
         esp_camera_fb_return(fb);
         setStatusLED(LOW);
         return;
@@ -837,6 +887,7 @@ void loop() {
 
     // Validate frame size
     if (fb->len < 100) {
+        Serial.println("Frame too small");
         esp_camera_fb_return(fb);
         setStatusLED(LOW);
         return;
@@ -848,8 +899,11 @@ void loop() {
     if (sent) {
         lastFrameTime = currentTime;
         setStatusLED(HIGH);  // Visual feedback for successful transmission
+        Serial.println("Frame sent successfully");
     } else {
+        Serial.println("Failed to send frame");
         if (currentTime - lastFrameTime > frameTimeout) {
+            Serial.println("Frame timeout, restarting...");
             ESP.restart();
         }
     }

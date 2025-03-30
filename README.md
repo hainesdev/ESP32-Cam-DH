@@ -1,6 +1,6 @@
-# ESP32Cam-DH
+# ESP32 Cam Distribution Hub (ESP32Cam-DH)
 
-A distributed camera surveillance system featuring real-time streaming, motion detection, and remote control capabilities, built with ESP32-CAM modules and a Python WebSocket server.
+A comprehensive distributed camera surveillance system featuring real-time streaming, motion detection, and remote control capabilities. Built with ESP32-CAM modules and a Python WebSocket server, this hub provides centralized management and monitoring of multiple cameras.
 
 ## Features
 
@@ -12,6 +12,8 @@ A distributed camera surveillance system featuring real-time streaming, motion d
 - Motor control capabilities
 - Automatic reconnection handling
 - Cross-platform web interface
+- Centralized camera management
+- Persistent camera settings and names
 
 ## System Components
 
@@ -96,6 +98,7 @@ http://<server_ip>:5000
 - **Motor Control**: Use arrow keys or on-screen controls for movement
 - **Camera Settings**: Adjust resolution, quality, and other parameters
 - **Motion Detection**: Configure sensitivity and detection area
+- **Camera Naming**: Customize camera names for easy identification
 
 ## Troubleshooting
 

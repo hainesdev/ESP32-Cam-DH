@@ -8,6 +8,31 @@ import numpy as np
 from collections import deque
 from io import BytesIO
 import base64
+from concurrent.futures import ThreadPoolExecutor
+from queue import Queue, Empty
+import threading
+import cProfile
+import pstats
+from functools import wraps
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)  # Change to INFO for less verbose logging
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+def profile_function(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        profiler = cProfile.Profile()
+        try:
+            return profiler.runcall(func, *args, **kwargs)
+        finally:
+            stats = pstats.Stats(profiler)
+            stats.sort_stats('cumulative')
+            # Only print top 5 time-consuming operations
+            stats.print_stats(5)
+    return wrapper
 
 class WSServer:
     def __init__(self, host='0.0.0.0', port=5000):
@@ -16,123 +41,180 @@ class WSServer:
         self.server = None
         self.clients = set()
         self.camera_clients = {}  # Dictionary to store camera clients with their IDs
-        self.web_clients = set()  # Set to store web clients
+        self.web_clients = {}  # Dictionary to store web clients with their selected cameras
         self.commands_queue = deque(maxlen=10)  # Store recent commands for new clients
         self.device_status = {
             'cameras': {},  # Dictionary to store camera statuses
             'web_clients': 0
         }
-        # Initialize OpenCV variables
+        # Initialize OpenCV variables with per-camera settings
         self.prev_frames = {}  # Dictionary to store previous frames for each camera
-        self.min_area = 4000  # Increased for UXGA resolution
-        self.threshold = 25
-        self.blur_size = 31
-        self.dilation_iterations = 3
-        self.process_every_n_frames = 2
-        self.frame_counter = 0
-        # Camera settings
-        self.camera_settings = {
-            'resolution': 'UXGA',
+        self.frame_queues = {}  # Dictionary to store frame queues for each camera
+        self.processing_threads = {}  # Dictionary to store processing threads for each camera
+        self.stop_processing = {}  # Dictionary to store stop flags for each camera
+        self.thread_locks = {}  # Dictionary to store thread locks for each camera
+        self.frame_counts = {}  # Dictionary to store frame counts for each camera
+        self.last_fps_update = {}  # Dictionary to store last FPS update time for each camera
+        self.fps = {}  # Dictionary to store FPS for each camera
+        self.frame_times = {}  # Dictionary to store frame processing times for each camera
+        self.last_frame_time = {}  # Dictionary to store last frame time for each camera
+        self.thread_pool = ThreadPoolExecutor(max_workers=4)  # Thread pool for processing frames
+        self.loop = asyncio.new_event_loop()  # Create a new event loop
+        asyncio.set_event_loop(self.loop)  # Set it as the current event loop
+        
+        # Set up logging
+        logging.basicConfig(level=logging.INFO)  # Change to INFO for less verbose logging
+        self.logger = logging.getLogger(__name__)
+        self.logger.setLevel(logging.INFO)
+        
+        # Initialize camera settings
+        self.camera_settings = {}
+        self.camera_motion_settings = {}
+        self.default_camera_settings = {
+            'resolution': 'VGA',
             'quality': 12,
             'brightness': 0,
-            'contrast': 0
+            'contrast': 0,
+            'saturation': 0,
+            'special_effect': 0,
+            'whitebal': 1,
+            'awb_gain': 1,
+            'wb_mode': 0,
+            'exposure_ctrl': 1,
+            'aec2': 0,
+            'ae_level': 0,
+            'aec_value': 300,
+            'gain_ctrl': 1,
+            'agc_gain': 0,
+            'gainceiling': 0,
+            'bpc': 0,
+            'wpc': 1,
+            'raw_gma': 1,
+            'lenc': 1,
+            'hmirror': 0,
+            'vflip': 0
+        }
+        self.default_motion_settings = {
+            'min_area': 4000,
+            'threshold': 25,
+            'blur_size': 31,
+            'dilation': 3,
+            'max_fps': 30  # Add max_fps setting
         }
         # Load saved settings if they exist
         self.load_settings()
-        self.selected_camera = None  # Currently selected camera ID
         print(f"[+] WSServer initialized with host={host}, port={port}")
         
+        # Add performance monitoring
+        self.frame_times = {}
+        self.frame_counts = {}
+        self.last_fps_update = {}
+        self.fps = {}
+        self.last_frame_time = {}
+
     def load_settings(self):
+        """Load settings from file"""
         try:
             with open('camera_settings.json', 'r') as f:
                 saved_settings = json.load(f)
                 if 'motion' in saved_settings:
-                    self.min_area = saved_settings['motion'].get('minArea', self.min_area)
-                    self.threshold = saved_settings['motion'].get('threshold', self.threshold)
-                    self.blur_size = saved_settings['motion'].get('blurSize', self.blur_size)
-                    self.dilation_iterations = saved_settings['motion'].get('dilation', self.dilation_iterations)
-                if 'camera' in saved_settings:
-                    self.camera_settings = saved_settings['camera']
+                    self.default_motion_settings.update(saved_settings['motion'])
+                if 'cameras' in saved_settings:
+                    self.camera_settings = saved_settings['cameras']
+                if 'camera_names' in saved_settings:
+                    # Update camera names in device status
+                    for camera_id, name in saved_settings['camera_names'].items():
+                        if camera_id in self.device_status['cameras']:
+                            self.device_status['cameras'][camera_id]['name'] = name
+                        else:
+                            # Create entry for disconnected camera
+                            self.device_status['cameras'][camera_id] = {
+                                'connected': False,
+                                'name': name,
+                                'last_seen': time.time(),
+                                'fps': 0
+                            }
+            print("[+] Settings loaded successfully")
         except FileNotFoundError:
-            pass
+            print("[+] No settings file found, using defaults")
+        except Exception as e:
+            print(f"[-] Error loading settings: {e}")
 
     def save_settings(self):
-        settings = {
-            'motion': {
-                'minArea': self.min_area,
-                'threshold': self.threshold,
-                'blurSize': self.blur_size,
-                'dilation': self.dilation_iterations
-            },
-            'camera': self.camera_settings
-        }
-        with open('camera_settings.json', 'w') as f:
-            json.dump(settings, f)
+        """Save settings to file"""
+        # Create camera names dictionary, preserving existing names
+        camera_names = {}
+        for camera_id, info in self.device_status['cameras'].items():
+            # Only save names for cameras that have been renamed
+            if info.get('name') and info['name'] != f'Camera {camera_id}':
+                camera_names[camera_id] = info['name']
 
-    def handle_settings(self, settings):
-        """Handle settings updates from clients"""
-        print(f"[+] Received settings update: {settings}")
-        
-        if 'motion' in settings:
-            motion_settings = settings['motion']
-            self.min_area = motion_settings.get('minArea', self.min_area)
-            self.threshold = motion_settings.get('threshold', self.threshold)
-            self.blur_size = motion_settings.get('blurSize', self.blur_size)
-            self.dilation_iterations = motion_settings.get('dilation', self.dilation_iterations)
-            print(f"[+] Updated motion settings: min_area={self.min_area}, threshold={self.threshold}, blur_size={self.blur_size}, dilation={self.dilation_iterations}")
-        
-        if 'camera' in settings:
-            self.camera_settings = settings['camera']
-            print(f"[+] Updated camera settings: {self.camera_settings}")
-            
-            # Send camera settings to all camera clients
+        settings = {
+            'motion': self.default_motion_settings,
+            'cameras': self.camera_settings,
+            'camera_names': camera_names
+        }
+        try:
+            with open('camera_settings.json', 'w') as f:
+                json.dump(settings, f)
+            print("[+] Settings saved successfully")
+        except Exception as e:
+            print(f"[-] Error saving settings: {e}")
+
+    def get_camera_settings(self, camera_id):
+        """Get settings for a specific camera, creating default if not exists"""
+        if camera_id not in self.camera_settings:
+            self.camera_settings[camera_id] = self.default_camera_settings.copy()
+        return self.camera_settings[camera_id]
+
+    async def apply_camera_settings(self, camera_id):
+        """Apply saved settings to a camera"""
+        if camera_id in self.camera_clients:
+            settings = self.get_camera_settings(camera_id)
             camera_settings_message = {
                 "type": "settings",
-                "data": {"camera": self.camera_settings}
+                "data": {"camera": settings}
             }
-            for client in self.camera_clients:
-                try:
-                    client.send(json.dumps(camera_settings_message))
-                except Exception as e:
-                    print(f"[-] Error sending camera settings to client: {e}")
-        
-        # Save settings to file
-        self.save_settings()
-        
-        # Broadcast updated settings to all web clients
-        settings_message = {
-            "type": "settings",
-            "data": {
-                "motion": {
-                    "minArea": self.min_area,
-                    "threshold": self.threshold,
-                    "blurSize": self.blur_size,
-                    "dilation": self.dilation_iterations
-                },
-                "camera": self.camera_settings
-            }
-        }
-        self.broadcast_to_web_clients(json.dumps(settings_message))
+            try:
+                await self.camera_clients[camera_id].send(json.dumps(camera_settings_message))
+                print(f"[+] Applied settings to camera {camera_id}")
+            except Exception as e:
+                print(f"[-] Error applying settings to camera {camera_id}: {e}")
+                import traceback
+                traceback.print_exc()
+
+    def get_camera_motion_settings(self, camera_id):
+        """Get motion settings for a specific camera, creating default if not exists"""
+        if camera_id not in self.camera_motion_settings:
+            self.camera_motion_settings[camera_id] = self.default_motion_settings.copy()
+        return self.camera_motion_settings[camera_id]
 
     def detect_motion(self, frame, camera_id):
-        """Detect motion in the frame"""
+        """Detect motion in the frame using camera-specific settings"""
         try:
+            start_time = time.time()
+            
             # Validate input frame
             if frame is None:
-                print("[-] Invalid frame: frame is None")
                 return None
 
             # Get frame dimensions
             height, width = frame.shape[:2]
             if width == 0 or height == 0:
-                print("[-] Invalid frame dimensions")
                 return None
 
+            # Get camera-specific motion settings
+            settings = self.get_camera_motion_settings(camera_id)
+
+            # Optimize frame size for motion detection
+            scale_factor = 0.5  # Reduce frame size for faster processing
+            small_frame = cv2.resize(frame, (int(width * scale_factor), int(height * scale_factor)))
+
             # Convert frame to grayscale
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            gray = cv2.cvtColor(small_frame, cv2.COLOR_BGR2GRAY)
             
-            # Apply Gaussian blur
-            blurred = cv2.GaussianBlur(gray, (self.blur_size, self.blur_size), 0)
+            # Apply Gaussian blur with optimized kernel size
+            blurred = cv2.GaussianBlur(gray, (settings['blur_size'], settings['blur_size']), 0)
             
             # Calculate frame difference
             if camera_id not in self.prev_frames or self.prev_frames[camera_id] is None:
@@ -147,80 +229,235 @@ class WSServer:
             self.prev_frames[camera_id] = blurred
             
             # Threshold the difference
-            _, thresh = cv2.threshold(frame_diff, self.threshold, 255, cv2.THRESH_BINARY)
+            _, thresh = cv2.threshold(frame_diff, settings['threshold'], 255, cv2.THRESH_BINARY)
             
-            # Dilate the thresholded image
-            kernel = np.ones((5,5), np.uint8)
-            dilated = cv2.dilate(thresh, kernel, iterations=self.dilation_iterations)
+            # Dilate the thresholded image with optimized kernel
+            kernel = np.ones((3,3), np.uint8)  # Reduced kernel size
+            dilated = cv2.dilate(thresh, kernel, iterations=settings['dilation'])
             
             # Find contours
             contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             
             # Draw bounding boxes around moving objects
             for contour in contours:
-                if cv2.contourArea(contour) > self.min_area:
+                if cv2.contourArea(contour) > settings['min_area']:
                     x, y, w, h = cv2.boundingRect(contour)
-                    cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 3)
+                    # Scale coordinates back to original frame size
+                    x = int(x / scale_factor)
+                    y = int(y / scale_factor)
+                    w = int(w / scale_factor)
+                    h = int(h / scale_factor)
+                    cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
+            
+            # Update performance metrics
+            processing_time = time.time() - start_time
+            self.frame_times[camera_id] = self.frame_times.get(camera_id, [])
+            self.frame_times[camera_id].append(processing_time)
+            
+            # Keep only last 30 frames for FPS calculation
+            if len(self.frame_times[camera_id]) > 30:
+                self.frame_times[camera_id].pop(0)
             
             return frame
+            
         except Exception as e:
-            print(f"[-] Error in motion detection: {e}")
-            print(f"[-] Frame type: {type(frame)}")
-            if frame is not None:
-                print(f"[-] Frame shape: {frame.shape}")
             return frame
 
-    def process_frame(self, frame_data, camera_id):
-        """Process the frame with OpenCV and return the processed frame"""
-        try:
-            # Only process every nth frame
-            self.frame_counter += 1
-            if self.frame_counter % self.process_every_n_frames != 0:
-                return frame_data
+    def process_frames(self, camera_id):
+        """Process frames for a specific camera in a separate thread"""
+        print(f"[+] Starting frame processing for camera {camera_id}")
+        settings = self.get_camera_motion_settings(camera_id)
+        
+        # Initialize frame timing
+        last_frame_time = time.time()
+        frame_interval = 1.0 / settings.get('max_fps', 30)  # Default to 30 FPS if not set
+        frame_count = 0
+        fps_update_interval = 1.0  # Update FPS every second
+        last_fps_update = time.time()
+        
+        while not self.stop_processing.get(camera_id, False):
+            try:
+                # Get frame from queue with timeout
+                frame_data = self.frame_queues[camera_id].get(timeout=1.0)
+                if frame_data is None:  # Poison pill to stop processing
+                    print(f"[+] Stopping frame processing for camera {camera_id}")
+                    break
 
-            # Validate frame data
-            if len(frame_data) < 100:  # Minimum reasonable JPEG size
-                print("[-] Invalid frame data - too small")
-                return None
-
-            # Convert binary data to numpy array
-            nparr = np.frombuffer(frame_data, np.uint8)
-            frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-            
-            if frame is None:
-                print("[-] Failed to decode frame")
-                return None
-
-            # Validate frame dimensions
-            height, width = frame.shape[:2]
-            if width == 0 or height == 0:
-                print("[-] Invalid frame dimensions after decode")
-                return None
-
-            # Check for minimum frame size
-            if width < 100 or height < 100:
-                print("[-] Frame too small")
-                return None
-
-            # Detect motion and draw bounding boxes
-            processed_frame = self.detect_motion(frame, camera_id)
-            
-            if processed_frame is None:
-                print("[-] Motion detection failed")
-                return None
-            
-            # Encode the processed frame back to JPEG with lower quality for better performance
-            _, buffer = cv2.imencode('.jpg', processed_frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
-            
-            # Validate encoded frame
-            if len(buffer) < 100:
-                print("[-] Encoded frame too small")
-                return None
+                # Track frame arrival time for FPS calculation
+                current_time = time.time()
+                frame_count += 1
                 
-            return buffer.tobytes()
-        except Exception as e:
-            print(f"[-] Error processing frame: {e}")
-            return None
+                # Calculate and update FPS every second
+                if current_time - last_fps_update >= fps_update_interval:
+                    fps = frame_count / (current_time - last_fps_update)
+                    self.fps[camera_id] = fps
+                    frame_count = 0
+                    last_fps_update = current_time
+                    
+                    # Update device status with current FPS
+                    if camera_id in self.device_status['cameras']:
+                        self.device_status['cameras'][camera_id]['fps'] = fps
+                        self.device_status['cameras'][camera_id]['last_seen'] = current_time
+
+                # Control frame rate
+                if current_time - last_frame_time < frame_interval:
+                    continue
+                last_frame_time = current_time
+
+                # Validate frame data
+                if len(frame_data) < 100:
+                    continue
+
+                # Convert binary data to numpy array
+                nparr = np.frombuffer(frame_data, np.uint8)
+                frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                
+                if frame is None:
+                    continue
+
+                # Validate frame dimensions
+                height, width = frame.shape[:2]
+                if width == 0 or height == 0:
+                    continue
+
+                # Check for minimum frame size
+                if width < 100 or height < 100:
+                    continue
+
+                # Detect motion and draw bounding boxes
+                processed_frame = self.detect_motion(frame, camera_id)
+                
+                if processed_frame is None:
+                    continue
+                
+                # Encode the processed frame back to JPEG with optimized quality
+                _, buffer = cv2.imencode('.jpg', processed_frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                
+                # Validate encoded frame
+                if len(buffer) < 100:
+                    continue
+                    
+                # Broadcast processed frame to clients that have selected this camera
+                try:
+                    # Create a new event loop for this thread if needed
+                    try:
+                        loop = asyncio.get_event_loop()
+                    except RuntimeError:
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                    
+                    # Run the broadcast coroutine in the event loop
+                    loop.run_until_complete(self.broadcast_to_web_clients(buffer.tobytes(), camera_id))
+                except Exception as e:
+                    print(f"[-] Error broadcasting frame for camera {camera_id}: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    
+            except Empty:
+                continue
+            except Exception as e:
+                print(f"[-] Error processing frames for camera {camera_id}: {e}")
+                import traceback
+                traceback.print_exc()
+                continue
+
+    def start_processing_thread(self, camera_id):
+        """Start a new processing thread for a camera"""
+        print(f"[+] Starting processing thread for camera {camera_id}")
+        with self.thread_locks.get(camera_id, threading.Lock()):
+            if camera_id not in self.processing_threads or not self.processing_threads[camera_id].is_alive():
+                # Initialize frame queue if not exists
+                if camera_id not in self.frame_queues:
+                    self.frame_queues[camera_id] = Queue()
+                    print(f"[+] Created frame queue for camera {camera_id}")
+                
+                # Initialize stop flag if not exists
+                if camera_id not in self.stop_processing:
+                    self.stop_processing[camera_id] = False
+                    print(f"[+] Initialized stop flag for camera {camera_id}")
+                
+                # Initialize thread lock if not exists
+                if camera_id not in self.thread_locks:
+                    self.thread_locks[camera_id] = threading.Lock()
+                    print(f"[+] Created thread lock for camera {camera_id}")
+                
+                # Create and start the processing thread
+                self.processing_threads[camera_id] = threading.Thread(
+                    target=self.process_frames,
+                    args=(camera_id,),
+                    daemon=True
+                )
+                self.processing_threads[camera_id].start()
+                print(f"[+] Started processing thread for camera {camera_id}")
+            else:
+                print(f"[!] Processing thread already running for camera {camera_id}")
+
+    def stop_processing_thread(self, camera_id):
+        """Stop the processing thread for a camera"""
+        with self.thread_locks.get(camera_id, threading.Lock()):
+            if camera_id in self.stop_processing:
+                self.stop_processing[camera_id] = True
+                if camera_id in self.frame_queues:
+                    # Clear the queue and add poison pill
+                    while not self.frame_queues[camera_id].empty():
+                        try:
+                            self.frame_queues[camera_id].get_nowait()
+                        except Empty:
+                            break
+                    self.frame_queues[camera_id].put(None)  # Poison pill
+                if camera_id in self.processing_threads:
+                    self.processing_threads[camera_id].join(timeout=1.0)
+                    print(f"[-] Stopped processing thread for camera {camera_id}")
+                    # Remove the thread from the dictionary
+                    self.processing_threads.pop(camera_id, None)
+
+    async def handle_settings(self, settings):
+        """Handle settings updates from clients"""
+        print(f"[+] Received settings update: {settings}")
+        
+        # Extract settings from web client format if needed
+        if isinstance(settings, dict) and 'data' in settings:
+            settings = settings['data']
+        
+        if 'motion' in settings:
+            motion_settings = settings['motion']
+            self.default_motion_settings.update(motion_settings)
+            for camera_id in self.camera_motion_settings:
+                self.camera_motion_settings[camera_id].update(motion_settings)
+            print(f"[+] Updated motion settings: {motion_settings}")
+        
+        if 'camera' in settings:
+            camera_settings = settings['camera']
+            # Update settings for all cameras
+            for camera_id in self.camera_settings:
+                self.camera_settings[camera_id].update(camera_settings)
+            print(f"[+] Updated camera settings: {camera_settings}")
+            
+            # Send camera settings to all camera clients
+            camera_settings_message = {
+                "type": "settings",
+                "data": {"camera": camera_settings}
+            }
+            for client in self.camera_clients.values():
+                try:
+                    await client.send(json.dumps(camera_settings_message))
+                except Exception as e:
+                    print(f"[-] Error sending camera settings to client: {e}")
+                    import traceback
+                    traceback.print_exc()
+        
+        # Save settings to file
+        self.save_settings()
+        
+        # Broadcast updated settings to all web clients
+        settings_message = {
+            "type": "settings",
+            "data": {
+                "motion": self.default_motion_settings,
+                "camera": self.get_camera_settings(next(iter(self.camera_settings.keys()))) if self.camera_settings else self.default_camera_settings
+            }
+        }
+        await self.broadcast_to_web_clients(json.dumps(settings_message))
 
     async def broadcast_status(self):
         """Broadcast current device status to all web clients"""
@@ -231,59 +468,114 @@ class WSServer:
         print(f"[+] Broadcasting status: {status_message}")
         
         # Send to all web clients directly
-        for client in self.web_clients:
+        for client, selected_cam in self.web_clients.items():
             try:
-                await client.send(status_message)
-                print(f"[+] Status sent to web client successfully")
+                # Only send status to clients that have selected a camera
+                if selected_cam is not None:
+                    await client.send(status_message)
+                    print(f"[+] Status sent to web client for camera {selected_cam}")
+                else:
+                    # For clients without a selected camera, send status to all clients
+                    await client.send(status_message)
+                    print(f"[+] Status sent to web client")
+            except websockets.exceptions.ConnectionClosed:
+                print("[-] Web client connection closed")
+                await self.unregister(client)
             except Exception as e:
                 print(f"[-] Error sending status to client: {e}")
-                # If there's an error sending to a client, remove it
-                self.web_clients.discard(client)
-                self.device_status["web_clients"] = len(self.web_clients)
-                # Broadcast updated status after removing failed client
-                await self.broadcast_status()
+                import traceback
+                traceback.print_exc()
 
     async def register(self, websocket):
         """Register a new client and identify if it's a camera or web client"""
         try:
-            # Wait for the first message to identify the client type
             message = await websocket.recv()
             
             if isinstance(message, str):
-                # Try to parse as JSON
                 try:
                     data = json.loads(message)
                     if data.get('type') == 'camera':
-                        # This is a camera client
                         camera_id = data.get('camera_id')
                         if camera_id:
+                            # Store the camera client with its unique ID
                             self.camera_clients[camera_id] = websocket
-                            self.device_status['cameras'][camera_id] = {
-                                'connected': True,
-                                'name': data.get('camera_name', f'Camera {camera_id}'),
-                                'last_seen': time.time()
-                            }
+                            
+                            # Initialize or update camera info in device status
+                            if camera_id not in self.device_status['cameras']:
+                                self.device_status['cameras'][camera_id] = {
+                                    'connected': True,
+                                    'name': data.get('camera_name', f'Camera {camera_id}'),
+                                    'last_seen': time.time(),
+                                    'fps': 0
+                                }
+                            else:
+                                # Update existing camera info while preserving the name
+                                self.device_status['cameras'][camera_id].update({
+                                    'connected': True,
+                                    'last_seen': time.time(),
+                                    'fps': 0
+                                })
+                            
                             print(f"[+] Camera {camera_id} connected")
+                            
+                            # Reset processing thread state for this camera
+                            if camera_id in self.stop_processing:
+                                self.stop_processing[camera_id] = False
+                            if camera_id in self.frame_queues:
+                                # Clear the queue
+                                while not self.frame_queues[camera_id].empty():
+                                    try:
+                                        self.frame_queues[camera_id].get_nowait()
+                                    except Empty:
+                                        break
+                            
+                            # Apply saved settings to the camera
+                            await self.apply_camera_settings(camera_id)
                             await self.broadcast_status()
-                        return
+                            return
                 except json.JSONDecodeError:
                     pass
             else:
-                # Binary message - assume it's a camera frame
                 camera_id = self._get_camera_id_from_websocket(websocket)
                 if camera_id:
                     self.camera_clients[camera_id] = websocket
-                    self.device_status['cameras'][camera_id] = {
-                        'connected': True,
-                        'name': f'Camera {camera_id}',
-                        'last_seen': time.time()
-                    }
+                    
+                    # Initialize or update camera info in device status
+                    if camera_id not in self.device_status['cameras']:
+                        self.device_status['cameras'][camera_id] = {
+                            'connected': True,
+                            'name': f'Camera {camera_id}',
+                            'last_seen': time.time(),
+                            'fps': 0
+                        }
+                    else:
+                        # Update existing camera info while preserving the name
+                        self.device_status['cameras'][camera_id].update({
+                            'connected': True,
+                            'last_seen': time.time(),
+                            'fps': 0
+                        })
+                    
                     print(f"[+] Camera {camera_id} connected")
+                    
+                    # Reset processing thread state for this camera
+                    if camera_id in self.stop_processing:
+                        self.stop_processing[camera_id] = False
+                    if camera_id in self.frame_queues:
+                        # Clear the queue
+                        while not self.frame_queues[camera_id].empty():
+                            try:
+                                self.frame_queues[camera_id].get_nowait()
+                            except Empty:
+                                break
+                    
+                    # Apply saved settings to the camera
+                    await self.apply_camera_settings(camera_id)
                     await self.broadcast_status()
                     return
             
             # If we get here, this is a web client
-            self.web_clients.add(websocket)
+            self.web_clients[websocket] = None
             self.device_status['web_clients'] = len(self.web_clients)
             print("[+] Web client connected")
             await self.broadcast_status()
@@ -308,28 +600,37 @@ class WSServer:
             if camera_id in self.device_status['cameras']:
                 self.device_status['cameras'][camera_id]['connected'] = False
                 self.device_status['cameras'][camera_id]['last_seen'] = time.time()
+            # Stop the processing thread for this camera
+            self.stop_processing_thread(camera_id)
             print(f"[-] Camera {camera_id} disconnected")
         elif websocket in self.web_clients:
-            self.web_clients.remove(websocket)
+            self.web_clients.pop(websocket, None)
             self.device_status['web_clients'] = len(self.web_clients)
             print("[-] Web client disconnected")
         
         await self.broadcast_status()
-    
-    async def broadcast_to_web_clients(self, message):
+
+    async def broadcast_to_web_clients(self, message, camera_id=None):
         """Broadcast message to all web clients"""
         if not self.web_clients:
-            print("[!] No web clients to broadcast to")
             return
-            
-        # Create a copy of the web clients set to avoid modification during iteration
+        
+        # Create a copy of the web clients dictionary to avoid modification during iteration
         web_clients = self.web_clients.copy()
-        for client in web_clients:
+        for client, selected_cam in web_clients.items():
             try:
-                await client.send(message)
-                print(f"[+] Frame sent to web client successfully")
+                # Only send frame to clients that have selected this camera
+                if isinstance(message, bytes) and camera_id is not None:
+                    # If client hasn't selected a camera yet, send the frame
+                    if selected_cam is None:
+                        await client.send(message)
+                    # If client has selected a camera, only send if it matches
+                    elif selected_cam == camera_id:
+                        await client.send(message)
+                else:
+                    # For non-frame messages (like status updates), send to all clients
+                    await client.send(message)
             except websockets.exceptions.ConnectionClosed:
-                print("[-] Web client connection closed")
                 await self.unregister(client)
             except Exception as e:
                 print(f"[-] Error broadcasting to web client: {str(e)}")
@@ -346,76 +647,70 @@ class WSServer:
                     # Handle camera messages
                     camera_id = data.get('camera_id')
                     if camera_id and camera_id in self.camera_clients:
-                        self.device_status['cameras'][camera_id]['last_seen'] = time.time()
-                        print(f"[+] Camera {camera_id} sent status update")
-                        await self.broadcast_status()
+                        if data.get('action') == 'update_name':
+                            # Handle camera name update
+                            new_name = data.get('camera_name')
+                            if new_name:
+                                # Update the camera name in device status
+                                self.device_status['cameras'][camera_id]['name'] = new_name
+                                # Save settings to persist the name
+                                self.save_settings()
+                                # Send confirmation to web clients
+                                name_update_message = {
+                                    "type": "camera",
+                                    "message": "name_updated",
+                                    "camera_id": camera_id,
+                                    "camera_name": new_name
+                                }
+                                await self.broadcast_to_web_clients(json.dumps(name_update_message))
+                                # Broadcast updated status to all clients
+                                await self.broadcast_status()
+                        else:
+                            self.device_status['cameras'][camera_id]['last_seen'] = time.time()
+                            await self.broadcast_status()
                 elif data.get('type') == 'web':
                     # Handle web client messages
                     if data.get('action') == 'select_camera':
-                        self.selected_camera = data.get('camera_id')
-                        print(f"[+] Web client selected camera: {self.selected_camera}")
-                        await self.broadcast_status()
-                elif data.get('type') == 'command':
-                    # Handle command messages
-                    command = data.get('message')
-                    camera_id = data.get('camera_id')
-                    if command and camera_id and camera_id in self.camera_clients:
-                        print(f"[+] Forwarding command {command} to camera {camera_id}")
-                        # Forward the command to the specific camera
-                        command_message = {
-                            "type": "command",
-                            "message": command
-                        }
-                        await self.camera_clients[camera_id].send(json.dumps(command_message))
-                elif data.get('type') == 'settings':
-                    # Handle settings messages
-                    settings = data.get('data')
-                    if settings:
-                        print(f"[+] Received settings update: {settings}")
-                        # Update local settings
-                        if 'camera' in settings:
-                            self.camera_settings = settings['camera']
-                            # Forward camera settings to the selected camera
-                            if self.selected_camera and self.selected_camera in self.camera_clients:
-                                print(f"[+] Forwarding camera settings to camera {self.selected_camera}")
-                                settings_message = {
-                                    "type": "command",
-                                    "message": "SETTINGS",
-                                    "data": {"camera": self.camera_settings}
-                                }
-                                await self.camera_clients[self.selected_camera].send(json.dumps(settings_message))
-                        if 'motion' in settings:
-                            motion_settings = settings['motion']
-                            self.min_area = motion_settings.get('minArea', self.min_area)
-                            self.threshold = motion_settings.get('threshold', self.threshold)
-                            self.blur_size = motion_settings.get('blurSize', self.blur_size)
-                            self.dilation_iterations = motion_settings.get('dilation', self.dilation_iterations)
-                        # Save settings to file
-                        self.save_settings()
-                        # Broadcast updated settings to all web clients
-                        await self.broadcast_to_web_clients(json.dumps({
-                            "type": "settings",
-                            "data": settings
-                        }))
+                        camera_id = data.get('camera_id')
+                        if camera_id in self.device_status['cameras']:
+                            self.web_clients[websocket] = camera_id
+                            # Send confirmation to the web client
+                            await websocket.send(json.dumps({
+                                "type": "status",
+                                "message": "camera_selected",
+                                "camera_id": camera_id
+                            }))
+                            await self.broadcast_status()
+                    elif data.get('action') == 'command':
+                        # Handle command messages
+                        command = data.get('message')
+                        camera_id = data.get('camera_id')
+                        if command and camera_id and camera_id in self.camera_clients:
+                            # Forward the command to the specific camera
+                            command_message = {
+                                "type": "command",
+                                "message": command
+                            }
+                            await self.camera_clients[camera_id].send(json.dumps(command_message))
+                    elif data.get('action') == 'settings':
+                        # Handle settings messages
+                        settings = data.get('data')
+                        if settings:
+                            await self.handle_settings(settings)
             else:
                 # Handle binary messages (camera frames)
                 camera_id = self._get_camera_id_from_websocket(websocket)
                 if camera_id:
-                    print(f"[+] Received frame from camera {camera_id}, size: {len(message)} bytes")
                     self.device_status['cameras'][camera_id]['last_seen'] = time.time()
                     
-                    # Only process and send frames from the selected camera
-                    if camera_id == self.selected_camera:
-                        print(f"[+] Processing frame from selected camera {camera_id}")
-                        # Process the frame with motion detection
-                        processed_frame = self.process_frame(message, camera_id)
-                        if processed_frame:
-                            print(f"[+] Frame processed successfully, sending to web clients")
-                            await self.broadcast_to_web_clients(processed_frame)
-                        else:
-                            print("[-] Frame processing failed")
+                    # Start processing thread if not already running
+                    self.start_processing_thread(camera_id)
+                    
+                    # Add frame to processing queue
+                    if camera_id in self.frame_queues:
+                        self.frame_queues[camera_id].put(message)
                     else:
-                        print(f"[!] Frame from camera {camera_id} ignored (not selected)")
+                        print(f"[-] No frame queue found for camera {camera_id}")
                     
                     await self.broadcast_status()
                 else:
@@ -441,7 +736,7 @@ class WSServer:
             pass
         finally:
             await self.unregister(websocket)
-
+    
     def run(self):
         """Start the WebSocket server"""
         async def main():
@@ -450,23 +745,32 @@ class WSServer:
                     self._handler,
                     self.host,
                     self.port,
-                    ping_interval=None  # Disable ping to avoid potential issues
+                    ping_interval=20,  # Add ping interval to detect disconnections
+                    ping_timeout=10,   # Add ping timeout
+                    close_timeout=10   # Add close timeout
                 )
                 print(f"[+] WebSocket server running on ws://{self.host}:{self.port}")
                 await self.server.wait_closed()
             except Exception as e:
                 print(f"[-] Server error: {e}")
-
-        # Create and set a new event loop for this thread
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
         
         try:
-            # Run the server
-            loop.run_until_complete(main())
+            # Run the server in the event loop
+            self.loop.run_until_complete(main())
         except KeyboardInterrupt:
             print("[+] Shutting down WebSocket server")
         except Exception as e:
             print(f"[-] Server error: {e}")
         finally:
-            loop.close()
+            self.loop.close()
+
+    def __del__(self):
+        """Cleanup when the server is destroyed"""
+        # Stop all processing threads
+        for camera_id in list(self.processing_threads.keys()):
+            self.stop_processing_thread(camera_id)
+        # Shutdown thread pool
+        self.thread_pool.shutdown(wait=True)
+        # Close event loop if it's still running
+        if not self.loop.is_closed():
+            self.loop.close() 

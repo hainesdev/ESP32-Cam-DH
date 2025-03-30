@@ -8,12 +8,13 @@ window.oncontextmenu = function () { return false; }
 // global websocket object
 let ws = null;
 let selectedCameraId = null;
+let lastFrameTime = null;  // Add variable for tracking frame timing
 
 // Settings state
 let currentSettings = {
 	camera: {
-		resolution: 'UXGA',
-		quality: 12,
+		resolution: 'VGA',
+		quality: 63,
 		brightness: 0,
 		contrast: 0,
 		saturation: 0,
@@ -38,8 +39,8 @@ let currentSettings = {
 	motion: {
 		minArea: 4000,
 		threshold: 25,
-		blurSize: 31,
-		dilation: 3
+		blurSize: 21,
+		dilation: 2
 	}
 };
 
@@ -151,8 +152,8 @@ function updateSettingsUI() {
 		// If there's an error, reset to default settings
 		currentSettings = {
 			camera: {
-				resolution: 'UXGA',
-				quality: 12,
+				resolution: 'VGA',
+				quality: 63,
 				brightness: 0,
 				contrast: 0,
 				saturation: 0,
@@ -177,8 +178,8 @@ function updateSettingsUI() {
 			motion: {
 				minArea: 4000,
 				threshold: 25,
-				blurSize: 31,
-				dilation: 3
+				blurSize: 21,
+				dilation: 2
 			}
 		};
 		saveSettings();
@@ -189,41 +190,82 @@ function updateSettingsUI() {
 // Send settings to server
 function sendSettings() {
 	if (!ws || ws.readyState !== WebSocket.OPEN) {
-		console.log("[-] WebSocket not connected");
-		showError();
+		console.error('WebSocket is not connected');
 		return;
 	}
 
-	const settingsMessage = {
-		type: "settings",
-		data: currentSettings
+	if (!selectedCameraId) {
+		console.error('No camera selected');
+		return;
+	}
+
+	const message = {
+		type: 'web',
+		action: 'settings',
+		data: {
+			camera: currentSettings.camera,
+			motion: currentSettings.motion
+		}
 	};
-	console.log("[+] Sending settings:", settingsMessage);
-	ws.send(JSON.stringify(settingsMessage));
+
+	console.log('[+] Sending settings:', message);
+	ws.send(JSON.stringify(message));
 }
 
 // helper for showing/hiding form and error alert
 function showConnectionForm() {
 	console.log("[+] Showing connection form");
-	document.getElementById("loading").classList.add("hidden");
-	document.getElementById("controls-container").classList.add("hidden");
-	document.getElementById("connection-container").classList.remove("hidden");
+	const loading = document.getElementById("loading");
+	const controls = document.getElementById("controls-container");
+	const errorContainer = document.getElementById("error-container");
+	
+	if (loading) loading.classList.add("hidden");
+	if (controls) controls.classList.add("hidden");
+	if (errorContainer) {
+		errorContainer.classList.remove("hidden");
+		errorContainer.classList.add("show");
+	}
 }
+
 function hideConnectionForm() {
 	console.log("[+] Hiding connection form");
-	document.getElementById("loading").classList.remove("hidden");
-	document.getElementById("controls-container").classList.remove("hidden");
-	document.getElementById("connection-container").classList.add("hidden");
+	const loading = document.getElementById("loading");
+	const controls = document.getElementById("controls-container");
+	const errorContainer = document.getElementById("error-container");
+	
+	if (loading) loading.classList.remove("hidden");
+	if (controls) controls.classList.remove("hidden");
+	if (errorContainer) {
+		errorContainer.classList.remove("show");
+		errorContainer.classList.add("hidden");
+	}
 }
+
 function showError() {
 	console.log("[-] Showing error message");
-	document.getElementById("error-container").classList.remove("hidden");
-	document.getElementById("error-container").classList.add("show");
+	const errorContainer = document.getElementById("error-container");
+	if (errorContainer) {
+		errorContainer.classList.remove("hidden");
+		errorContainer.classList.add("show");
+	}
 }
 
 // Update status display
 function updateStatus(data) {
 	console.log("[+] Updating status with data:", data);
+	
+	// Update connection status indicator
+	const connectionStatus = document.getElementById("connection-status");
+	if (connectionStatus) {
+		if (data.cameras && Object.values(data.cameras).some(cam => cam.connected)) {
+			connectionStatus.className = "status-dot connected";
+		} else if (ws && ws.readyState === WebSocket.OPEN) {
+			connectionStatus.className = "status-dot connecting";
+		} else {
+			connectionStatus.className = "status-dot";
+		}
+	}
+
 	if (data.cameras) {
 		const cameraSelect = document.getElementById("camera-select");
 		if (cameraSelect) {
@@ -233,10 +275,11 @@ function updateStatus(data) {
 			// Clear existing options
 			cameraSelect.innerHTML = "";
 			
-			// Add options for each camera
+			// Add options for each camera, including disconnected ones
 			Object.entries(data.cameras).forEach(([cameraId, cameraData]) => {
 				const option = document.createElement("option");
 				option.value = cameraId;
+				// Use the persisted name from the server
 				option.textContent = `${cameraData.name} (${cameraData.connected ? "Connected" : "Disconnected"})`;
 				cameraSelect.appendChild(option);
 			});
@@ -246,15 +289,26 @@ function updateStatus(data) {
 				cameraSelect.value = currentSelection;
 				selectedCameraId = currentSelection;
 			}
-			// Only auto-select first camera if this is the initial connection
+			// Only auto-select first connected camera if this is the initial connection
 			else if (!selectedCameraId && cameraSelect.options.length > 0 && !ws.hasInitialSelection) {
-				selectedCameraId = cameraSelect.options[0].value;
-				cameraSelect.value = selectedCameraId;
-				selectCamera(selectedCameraId);
-				ws.hasInitialSelection = true;
+				const firstConnectedCamera = Array.from(cameraSelect.options).find(opt => 
+					opt.textContent.includes("Connected")
+				);
+				if (firstConnectedCamera) {
+					selectedCameraId = firstConnectedCamera.value;
+					cameraSelect.value = selectedCameraId;
+					selectCamera(selectedCameraId);
+					ws.hasInitialSelection = true;
+				}
 			}
 
-			// Update camera status badge
+			// Show/hide edit name button based on camera selection
+			const editButton = document.getElementById("edit-camera-name");
+			if (editButton) {
+				editButton.style.display = selectedCameraId ? "block" : "none";
+			}
+
+			// Update camera status text
 			const cameraStatus = document.getElementById("camera-status");
 			if (cameraStatus) {
 				const connectedCount = Object.values(data.cameras).filter(cam => cam.connected).length;
@@ -267,59 +321,37 @@ function updateStatus(data) {
 				
 				if (selectedCameraDisconnected) {
 					cameraStatus.textContent = `Camera Disconnected - Attempting to reconnect...`;
-					cameraStatus.className = "badge bg-warning";
+					cameraStatus.className = "status-text text-warning";
 				} else if (connectedCount === 0) {
 					cameraStatus.textContent = "No Cameras Connected";
-					cameraStatus.className = "badge bg-danger";
+					cameraStatus.className = "status-text text-danger";
 				} else {
 					cameraStatus.textContent = `Cameras: ${connectedCount}/${totalCount} Connected`;
-					cameraStatus.className = `badge ${connectedCount === totalCount ? 'bg-success' : 'bg-warning'}`;
+					cameraStatus.className = "status-text text-success";
 				}
 			}
 
-			// Handle camera disconnection
-			if (selectedCameraId && data.cameras[selectedCameraId] && !data.cameras[selectedCameraId].connected) {
-				console.log(`[-] Selected camera ${selectedCameraId} disconnected`);
-				
-				// Update the stream container to show disconnection message
-				const streamContainer = document.getElementById("controls-container");
-				if (streamContainer) {
-					const existingMessage = streamContainer.querySelector(".disconnect-message");
-					if (!existingMessage) {
-						const disconnectMessage = document.createElement("div");
-						disconnectMessage.className = "disconnect-message alert alert-warning";
-						disconnectMessage.innerHTML = `
-							<strong>Camera Disconnected</strong><br>
-							The selected camera has lost connection. The system will attempt to reconnect automatically.
-						`;
-						streamContainer.insertBefore(disconnectMessage, streamContainer.firstChild);
-					}
-				}
-				
-				// Hide the stream and show loading
-				const stream = document.getElementById("stream");
-				const loading = document.getElementById("loading");
-				if (stream) stream.classList.add("hidden");
-				if (loading) loading.classList.remove("hidden");
-				
-				// Clear selection after a delay to allow for reconnection
-				setTimeout(() => {
-					if (data.cameras[selectedCameraId] && !data.cameras[selectedCameraId].connected) {
-						selectedCameraId = null;
-						cameraSelect.value = "";
-						
-						// Remove the disconnect message
-						const disconnectMessage = streamContainer.querySelector(".disconnect-message");
-						if (disconnectMessage) {
-							disconnectMessage.remove();
-						}
-					}
-				}, 5000); // Wait 5 seconds before clearing selection
-			} else {
-				// Remove disconnect message if it exists and camera is connected
-				const disconnectMessage = document.querySelector(".disconnect-message");
-				if (disconnectMessage) {
-					disconnectMessage.remove();
+			// Update FPS counter for selected camera
+			const fpsCounter = document.getElementById("fps-counter");
+			if (fpsCounter && selectedCameraId && data.cameras[selectedCameraId]) {
+				const fps = data.cameras[selectedCameraId].fps || 0;
+				fpsCounter.textContent = `FPS: ${fps.toFixed(1)}`;
+			}
+
+			// Show/hide stream and loading message based on selected camera connection status
+			const stream = document.getElementById("stream");
+			const loading = document.getElementById("loading");
+			const connectingMessage = document.querySelector("#controls-container > div > p");
+			
+			if (stream && loading && connectingMessage) {
+				if (selectedCameraId && data.cameras[selectedCameraId] && data.cameras[selectedCameraId].connected) {
+					stream.classList.remove("hidden");
+					loading.classList.add("hidden");
+					connectingMessage.style.display = "none";
+				} else {
+					stream.classList.add("hidden");
+					loading.classList.remove("hidden");
+					connectingMessage.style.display = "block";
 				}
 			}
 		}
@@ -328,7 +360,7 @@ function updateStatus(data) {
 		const cameraStatus = document.getElementById("camera-status");
 		if (cameraStatus) {
 			cameraStatus.textContent = "No Cameras Available";
-			cameraStatus.className = "badge bg-danger";
+			cameraStatus.className = "status-text text-danger";
 		}
 		
 		// Clear selection and hide stream
@@ -353,7 +385,7 @@ function updateStatus(data) {
 	}
 	
 	// Update web client count
-	const webClientCount = document.getElementById("web-client-count");
+	const webClientCount = document.getElementById("web-clients");
 	if (webClientCount) {
 		webClientCount.textContent = `Web Clients: ${data.web_clients || 0}`;
 	}
@@ -430,6 +462,11 @@ function WSConnection(host, port) {
 				console.log("[-] Connection timeout");
 				ws.close();
 				showError();
+				// Attempt to reconnect after timeout
+				setTimeout(() => {
+					console.log("[+] Attempting to reconnect after timeout...");
+					WSConnection(host, port);
+				}, 5000);
 			}
 		}, 5000);
 		
@@ -454,19 +491,28 @@ function WSConnection(host, port) {
 			console.log("[-] WebSocket error:", error);
 			clearTimeout(connectionTimeout);
 			// Update status to show disconnected state
-			updateStatus({ camera: false, web_clients: 0 });
+			updateStatus({ cameras: {}, web_clients: 0 });
 			showConnectionForm();
-			showError();
 			ws = null;
+			// Attempt to reconnect after error
+			setTimeout(() => {
+				console.log("[+] Attempting to reconnect after error...");
+				WSConnection(host, port);
+			}, 5000);
 		}
 
 		ws.onclose = (event) => {
 			console.log("[-] WebSocket connection closed:", event.code, event.reason);
 			clearTimeout(connectionTimeout);
 			// Update status to show disconnected state
-			updateStatus({ camera: false, web_clients: 0 });
+			updateStatus({ cameras: {}, web_clients: 0 });
 			showConnectionForm();
 			ws = null;
+			// Attempt to reconnect after close
+			setTimeout(() => {
+				console.log("[+] Attempting to reconnect after close...");
+				WSConnection(host, port);
+			}, 5000);
 		}
 
 		ws.onmessage = (message) => {
@@ -491,8 +537,24 @@ function WSConnection(host, port) {
 				console.log("[+] Created new frame URL");
 				
 				const img = document.getElementById("stream");
-				img.onload = () => console.log("[+] Frame loaded successfully");
-				img.onerror = (e) => console.log("[-] Error loading frame:", e);
+				img.onload = () => {
+					console.log("[+] Frame loaded successfully");
+					// Update FPS counter if available
+					const fpsCounter = document.getElementById("fps-counter");
+					if (fpsCounter) {
+						const currentTime = performance.now();
+						if (lastFrameTime) {
+							const fps = 1000 / (currentTime - lastFrameTime);
+							fpsCounter.textContent = `FPS: ${fps.toFixed(1)}`;
+						}
+						lastFrameTime = currentTime;
+					}
+				};
+				img.onerror = (e) => {
+					console.log("[-] Error loading frame:", e);
+					console.log("[-] Frame URL:", urlObject);
+					console.log("[-] Frame size:", message.data.size);
+				};
 				img.src = urlObject;
 				console.log("[+] Set frame source");
 			} else {
@@ -504,6 +566,31 @@ function WSConnection(host, port) {
 					if (data.type === "status") {
 						console.log("[+] Updating status with:", data.data);
 						updateStatus(data.data);
+						
+						// Handle initial camera selection after first status update
+						if (!ws.hasInitialSelection && data.data.cameras) {
+							const connectedCameras = Object.entries(data.data.cameras)
+								.filter(([_, cam]) => cam.connected)
+								.map(([id]) => id);
+							
+							if (connectedCameras.length > 0) {
+								const firstCamera = connectedCameras[0];
+								console.log("[+] Auto-selecting first connected camera:", firstCamera);
+								selectCamera(firstCamera);
+								ws.hasInitialSelection = true;
+							}
+						}
+					} else if (data.type === "status" && data.message === "camera_selected") {
+						console.log("[+] Camera selection confirmed by server:", data.camera_id);
+						// Update UI to reflect the selected camera
+						const cameraSelect = document.getElementById("camera-select");
+						if (cameraSelect) {
+							cameraSelect.value = data.camera_id;
+							const editButton = document.getElementById("edit-camera-name");
+							if (editButton) {
+								editButton.style.display = "block";
+							}
+						}
 					} else if (data.type === "settings") {
 						console.log("[+] Received settings update:", data.data);
 						// Merge received settings with current settings
@@ -528,7 +615,8 @@ function WSConnection(host, port) {
 						if (cameraSelect) {
 							const option = Array.from(cameraSelect.options).find(opt => opt.value === data.camera_id);
 							if (option) {
-								option.textContent = `${data.camera_name} (Connected)`;
+								const isConnected = option.textContent.includes("Connected");
+								option.textContent = `${data.camera_name} (${isConnected ? "Connected" : "Disconnected"})`;
 							}
 						}
 					}
@@ -596,7 +684,7 @@ function sendMotorCommand(command) {
 
 	const message = {
 		type: 'command',
-		command: command,
+		message: command,
 		camera_id: selectedCameraId
 	};
 
@@ -727,35 +815,16 @@ document.addEventListener('DOMContentLoaded', function() {
 	// Load saved settings
 	loadSettings();
 	
-	// Add camera selection dropdown to the status container
-	const statusContainer = document.querySelector('.status-container .card-body');
-	if (statusContainer) {
-		const cameraSelectDiv = document.createElement('div');
-		cameraSelectDiv.className = 'mt-2';
-		cameraSelectDiv.innerHTML = `
-			<div class="d-flex justify-content-between align-items-center mb-2">
-				<label for="camera-select" class="form-label mb-0">Select Camera</label>
-				<button type="button" class="btn btn-sm btn-outline-primary" id="edit-camera-name" style="display: none;">
-					Edit Name
-				</button>
-			</div>
-			<select class="form-select" id="camera-select" onchange="selectCamera(this.value)">
-				<option value="">Loading cameras...</option>
-			</select>
-		`;
-		statusContainer.appendChild(cameraSelectDiv);
-		
-		// Add event listener for edit name button
-		const editButton = document.getElementById("edit-camera-name");
-		if (editButton) {
-			editButton.addEventListener('click', function() {
-				const cameraSelect = document.getElementById("camera-select");
-				const selectedOption = cameraSelect.options[cameraSelect.selectedIndex];
-				if (selectedOption && selectedOption.value) {
-					editCameraName(selectedOption.value, selectedOption.textContent.split(' (')[0]);
-				}
-			});
-		}
+	// Add event listener for edit name button
+	const editButton = document.getElementById("edit-camera-name");
+	if (editButton) {
+		editButton.addEventListener('click', function() {
+			const cameraSelect = document.getElementById("camera-select");
+			const selectedOption = cameraSelect.options[cameraSelect.selectedIndex];
+			if (selectedOption && selectedOption.value) {
+				editCameraName(selectedOption.value, selectedOption.textContent.split(' (')[0]);
+			}
+		});
 	}
 	
 	// Set up motion settings event listeners
@@ -784,32 +853,9 @@ document.addEventListener('DOMContentLoaded', function() {
 		sendSettings();
 	});
 	
-	// Set up settings event listeners
-	document.getElementById('quality').addEventListener('input', function(e) {
-		const quality = parseInt(e.target.value);
-		currentSettings.camera.quality = quality;
-		document.getElementById('quality-value').textContent = quality;
-		
-		// Add visual feedback based on quality range
-		const qualityValue = document.getElementById('quality-value');
-		if (quality <= 15) {
-			qualityValue.className = 'text-success';
-			qualityValue.title = 'High quality - Good for still images';
-		} else if (quality <= 25) {
-			qualityValue.className = 'text-primary';
-			qualityValue.title = 'Good quality - Recommended for streaming';
-		} else if (quality <= 35) {
-			qualityValue.className = 'text-warning';
-			qualityValue.title = 'Acceptable quality - Smaller file size';
-		} else {
-			qualityValue.className = 'text-danger';
-			qualityValue.title = 'Low quality - Not recommended';
-		}
-	});
-	
-	// Add event listeners for all camera settings
+	// Set up camera settings event listeners
 	const cameraSettings = [
-		'brightness', 'contrast', 'saturation', 'special_effect', 'whitebal',
+		'resolution', 'quality', 'brightness', 'contrast', 'saturation', 'special_effect', 'whitebal',
 		'awb_gain', 'wb_mode', 'exposure_ctrl', 'aec2', 'ae_level', 'aec_value',
 		'gain_ctrl', 'agc_gain', 'gainceiling', 'bpc', 'wpc', 'raw_gma', 'lenc',
 		'hmirror', 'vflip'
@@ -870,54 +916,33 @@ document.addEventListener('DOMContentLoaded', function() {
 	const port = "5000";
 	console.log("[+] Auto-connecting to server:", host, ":", port);
 	ws = WSConnection(host, port);
-	
-	// Keep the manual connection form as a fallback
-	const connection_button = document.getElementById("connection-submit");
-	const host_input = document.getElementById("host-ip");
-	const port_input = document.getElementById("host-port");
-	
-	if (!connection_button || !host_input || !port_input) {
-		console.log("[-] Connection form elements not found!");
-		return;
-	}
-	
-	// Pre-fill the connection form with default values
-	host_input.value = host;
-	port_input.value = port;
-	
-	console.log("[+] Connection form elements found, setting up event listener");
-	connection_button.addEventListener('click', function (e) {
-		e.preventDefault();
-		const host = host_input.value;
-		const port = port_input.value;
-		console.log("[+] Connection button clicked, host:", host, "port:", port);
-		ws = WSConnection(host, port);
-	});
 });
 
+// handle camera selection
 function selectCamera(cameraId) {
 	console.log("[+] Selecting camera:", cameraId);
-	if (!cameraId) {
-		console.log("[-] No camera ID provided");
-		return;
-	}
+	selectedCameraId = cameraId;
 	
-	selectedCameraId = cameraId;  // Store the selected camera ID
-	
-	// Update the select element to match
+	// Update the camera select element
 	const cameraSelect = document.getElementById("camera-select");
 	if (cameraSelect) {
 		cameraSelect.value = cameraId;
+		// Show/hide edit name button based on selection
+		const editButton = document.getElementById("edit-camera-name");
+		if (editButton) {
+			editButton.style.display = cameraId ? "block" : "none";
+		}
 	}
 	
+	// Send camera selection to server
 	if (ws && ws.readyState === WebSocket.OPEN) {
 		const message = {
 			type: "web",
 			action: "select_camera",
 			camera_id: cameraId
 		};
+		console.log("[+] Sending camera selection message:", message);
 		ws.send(JSON.stringify(message));
-		console.log("[+] Sent camera selection message:", message);
 	} else {
 		console.log("[-] WebSocket not connected, cannot select camera");
 	}
@@ -936,7 +961,8 @@ function sendLEDCommand(command) {
 	}
 
 	const message = {
-		type: 'command',
+		type: 'web',
+		action: 'command',
 		message: command,
 		camera_id: selectedCameraId
 	};
