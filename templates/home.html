@@ -1,0 +1,22 @@
+<div class="status-container">
+    <div class="card">
+        <div class="card-body">
+            <h5 class="card-title">Status</h5>
+            <p class="card-text">
+                <span id="camera-status" class="badge bg-danger">Cameras: Disconnected</span>
+                <span id="web-clients" class="badge bg-secondary">Web Clients: 0</span>
+            </p>
+            <div id="connection-form" class="mt-3">
+                <div class="mb-3">
+                    <label for="server-address" class="form-label">Server Address</label>
+                    <input type="text" class="form-control" id="server-address" placeholder="Enter server address">
+                </div>
+                <div class="mb-3">
+                    <label for="server-port" class="form-label">Server Port</label>
+                    <input type="number" class="form-control" id="server-port" placeholder="Enter server port">
+                </div>
+                <button class="btn btn-primary" onclick="connect()">Connect</button>
+            </div>
+        </div>
+    </div>
+</div> 
